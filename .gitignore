@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+
+# VS Code extension package
+*.vsix
+
+# Sandbox environment
+.vscode-sandbox/
+
+# Lock file
+package-lock.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.idea/
+*.swp
+*.swo
+*~

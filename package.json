@@ -1,0 +1,70 @@
+{
+  "name": "auto-vim-ime",
+  "displayName": "Auto Vim IME",
+  "description": "Auto switch IME for Linux VSCodeVim users using AST",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Keymaps",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "auto-vim-ime.escape",
+        "title": "Vim Escape and Switch to English"
+      },
+      {
+        "command": "auto-vim-ime.toggleIME",
+        "title": "Toggle IME (Chinese/English)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "auto-vim-ime.escape",
+        "key": "escape",
+        "when": "vim.mode == 'Insert' && editorTextFocus"
+      },
+      {
+        "command": "auto-vim-ime.toggleIME",
+        "key": "ctrl+shift+space",
+        "when": "editorTextFocus"
+      }
+    ],
+    "configuration": {
+      "title": "Auto Vim IME",
+      "properties": {
+        "auto-vim-ime.ibus.englishEngine": {
+          "type": "string",
+          "default": "xkb:us::eng",
+          "description": "IBus engine name for English (find using 'ibus engine')"
+        },
+        "auto-vim-ime.ibus.chineseEngine": {
+          "type": "string",
+          "default": "libpinyin",
+          "description": "IBus engine name for Chinese (find using 'ibus engine')"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "postinstall": "node scripts/download-wasm.js",
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch"
+  },
+  "dependencies": {
+    "web-tree-sitter": "^0.22.6"
+  },
+  "devDependencies": {
+    "esbuild": "^0.18.0",
+    "@types/node": "18.x",
+    "@types/vscode": "^1.80.0",
+    "typescript": "^5.1.3"
+  }
+}
