@@ -29,26 +29,32 @@
 
 ## 安装
 
-### 从 VS Code Marketplace 安装
+### 方式一：VS Code Marketplace 安装
 
 1. 打开 VS Code
-2. 按 `Ctrl+P` 打开命令面板
-3. 输入 `ext install auto-vim-ime`
+2. 按 `Ctrl+Shift+X` 打开扩展面板
+3. 搜索 `Auto Vim IME`
+4. 点击 **Install** 安装
 
-### 从源码构建
+或使用命令行：
 
 ```bash
-# 克隆仓库
-git clone https://github.com/your-username/auto-vim-ime.git
-cd auto-vim-ime
+code --install-extension CI124.auto-vim-ime
+```
 
-# 安装依赖（自动下载 WASM 文件）
-npm install
+### 方式二：手动安装（.vsix 文件）
 
-# 编译
-npm run compile
+从 [GitHub Releases](https://github.com/CI124/auto-vim-ime/releases) 下载最新版本的 `.vsix` 文件，然后：
 
-# 按 F5 启动调试
+1. 打开 VS Code
+2. 按 `Ctrl+Shift+P` 打开命令面板
+3. 输入 `Extensions: Install from VSIX...`
+4. 选择下载的 `.vsix` 文件
+
+或使用命令行：
+
+```bash
+code --install-extension auto-vim-ime-0.3.0.vsix
 ```
 
 ## 使用方法
