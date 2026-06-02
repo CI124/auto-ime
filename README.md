@@ -3,7 +3,7 @@
 [![VS Code Extension](https://img.shields.io/badge/VS%20Code-Extension-blue.svg)](https://marketplace.visualstudio.com/items?itemName=auto-vim-ime)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-一个为 Linux 上的 VSCodeVim 用户设计的输入法自动切换扩展。基于 Tree-sitter AST 解析，根据代码上下文智能切换中/英文输入法。
+一个为 VSCodeVim 用户设计的输入法自动切换扩展，支持 **Linux** 和 **Windows**。基于 Tree-sitter AST 解析，根据代码上下文智能切换中/英文输入法。
 
 ## 功能特性
 
@@ -78,11 +78,14 @@ code --install-extension auto-vim-ime-0.3.0.vsix
 
 ## 支持的输入法框架
 
-- **Fcitx5**（推荐）
-- **Fcitx4**
-- **IBus**
+| 平台 | 输入法框架 | 说明 |
+|------|-----------|------|
+| Linux | **Fcitx5**（推荐） | 自动读取 `~/.config/fcitx5/profile` 获取输入法列表 |
+| Linux | **Fcitx4** | 通过 `fcitx-remote` 命令切换 |
+| Linux | **IBus** | 通过 `ibus engine` 命令切换，支持 D-Bus 信号监听 |
+| Windows | **PowerShell + imm32** | 通过 Win32 `ImmSetConversionStatus` API 切换，支持所有 Windows 输入法 |
 
-扩展会自动检测系统中安装的输入法框架。
+扩展会自动检测系统平台和输入法框架。
 
 ## 开发
 
@@ -142,7 +145,9 @@ npm run watch
 
 1. **事件监听**：监听光标移动和文档变化事件
 2. **AST 解析**：使用 Tree-sitter 解析代码，判断光标是否在注释/字符串中
-3. **输入法切换**：通过 shell 命令调用 Fcitx5/Fcitx4/IBus 切换输入法
+3. **输入法切换**：
+   - Linux：通过 shell 命令调用 Fcitx5/Fcitx4/IBus
+   - Windows：通过 PowerShell 调用 Win32 imm32 API
 4. **状态栏更新**：实时更新状态栏显示
 
 ## 常见问题
@@ -150,14 +155,14 @@ npm run watch
 ### 扩展不工作
 
 1. 检查是否安装了 VSCodeVim 扩展
-2. 检查系统中是否安装了 Fcitx5/Fcitx4/IBus
-3. 查看 "Auto Vim IME" 输出面板的日志
+2. Linux：检查系统中是否安装了 Fcitx5/Fcitx4/IBus
+3. Windows：确保 PowerShell 可用（Windows 7+ 自带）
+4. 查看 "Auto Vim IME" 输出面板的日志
 
 ### 输入法没有切换
 
-1. 确认输入法框架正在运行
-2. 检查 `PATH` 环境变量是否包含输入法命令路径
-3. 尝试手动执行 `fcitx5-remote -n` 或 `ibus engine` 测试
+- **Linux**：确认输入法框架正在运行，检查 `PATH` 环境变量，尝试手动执行 `fcitx5-remote -n` 或 `ibus engine` 测试
+- **Windows**：确认 PowerShell 可用，尝试在 PowerShell 中手动执行 `[ImmHelper]::GetForegroundWindow()` 测试 imm32 API 是否正常
 
 ### 性能问题
 
