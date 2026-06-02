@@ -1,12 +1,14 @@
 import * as vscode from 'vscode';
 import { createImeManager, IIMEManager } from './IMEManager';
 import { ASTAnalyzer } from './ASTAnalyzer';
+import { IMEStateManager } from './IMEStateManager';
 
 let astAnalyzer: ASTAnalyzer;
 let debounceTimer: NodeJS.Timeout | null = null;
 let outputChannel: vscode.OutputChannel;
 let statusBarItem: vscode.StatusBarItem;
 let imeManager: IIMEManager;
+let imeStateManager: IMEStateManager;
 
 // 当前输入法状态
 let currentIMEMode: 'en' | 'zh' = 'en';
@@ -36,10 +38,12 @@ function forceEnglish() {
     imeManager.switchToEnglish();
     updateStatusBar('en');
     outputChannel.appendLine('[ESC] Forced switch to English');
+    // 重置手动覆盖模式
+    imeStateManager.resetManualOverride();
 }
 
 /**
- * 切换输入法状态
+ * 切换输入法状态（用户手动触发）
  */
 function toggleIME() {
     if (currentIMEMode === 'zh') {
@@ -51,6 +55,8 @@ function toggleIME() {
         updateStatusBar('zh');
         outputChannel.appendLine('[StatusBar] User toggled to Chinese');
     }
+    // 标记为自动切换，避免被误判为用户手动切换
+    imeStateManager.markAutoSwitch();
 }
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -61,6 +67,13 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // 初始化 IME 管理器并输出检测日志
     imeManager = createImeManager(outputChannel);
+
+    // 初始化 IME 状态管理器（监听用户手动切换）
+    imeStateManager = new IMEStateManager({
+        info: (msg) => outputChannel.appendLine(msg),
+        error: (msg) => outputChannel.appendLine(msg)
+    });
+    await imeStateManager.startListening();
 
     // ==========================================
     // 状态栏：显示当前输入法状态
@@ -109,15 +122,26 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // 核心分析函数：检测光标上下文并切换输入法
     async function analyzeAndSwitch(editor: vscode.TextEditor) {
+        // 如果用户手动切换了输入法，暂停自动切换
+        if (imeStateManager.isManualOverride()) {
+            outputChannel.appendLine('[AutoSwitch] 手动覆盖模式，跳过自动切换');
+            return;
+        }
+
         const document = editor.document;
         const position = editor.selections[0].active;
 
+        outputChannel.appendLine(`[AutoSwitch] 分析位置: line=${position.line}, char=${position.character}`);
         const astResult = await astAnalyzer.isCursorInCommentOrString(document, position);
 
         if (astResult.match) {
+            outputChannel.appendLine(`[AutoSwitch] 检测到 ${astResult.type}，切换到中文`);
+            imeStateManager.markAutoSwitch();
             imeManager.switchToChinese();
             updateStatusBar('zh');
         } else {
+            outputChannel.appendLine('[AutoSwitch] 代码区域，切换到英文');
+            imeStateManager.markAutoSwitch();
             imeManager.switchToEnglish();
             updateStatusBar('en');
         }
@@ -176,5 +200,8 @@ export async function activate(context: vscode.ExtensionContext) {
 export function deactivate() {
     if (debounceTimer) {
         clearTimeout(debounceTimer);
+    }
+    if (imeStateManager) {
+        imeStateManager.stopListening();
     }
 }

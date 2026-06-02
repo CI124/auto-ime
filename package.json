@@ -63,12 +63,13 @@
     "watch": "node esbuild.js --watch"
   },
   "dependencies": {
+    "dbus-next": "^0.10.2",
     "web-tree-sitter": "^0.22.6"
   },
   "devDependencies": {
-    "esbuild": "^0.18.0",
     "@types/node": "18.x",
     "@types/vscode": "^1.80.0",
+    "esbuild": "^0.18.0",
     "typescript": "^5.1.3"
   }
 }
