@@ -5,6 +5,21 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.0-beta.1] - 2026-06-02
+
+### 新增
+- **普通模式支持**：未安装 Vim 扩展的用户可直接使用，全局分析注释/字符串区域并自动切换输入法
+- **Vim 模式自动检测**：启动时自动检测 VSCodeVim 扩展，决定运行模式
+- **光标样式轮询**：通过 20ms 间隔轮询检测 Vim `i`、`I`、`s`、`c` 等命令触发的 Normal→Insert 切换
+
+### 优化
+- **构建输出重构**：编译产物统一输出到 `dist/` 目录，项目结构更清晰
+- **项目清理**：移除旧版本 .vsix 文件和临时目录
+
+### 修复
+- 修复 Vim `i` 键进入 Insert 模式后输入法未自动切换的问题
+- 修复 Normal 模式下事件监听器与 Vim 模式互相干扰的问题
+
 ## [0.4.0] - 2026-06-02
 
 ### 新增
@@ -66,6 +81,7 @@
 - 自动检测 Fcitx5/Fcitx4/IBus
 - 300ms 防抖响应
 
+[0.5.0-beta.1]: https://github.com/CI124/auto-vim-ime/compare/v0.4.0...v0.5.0-beta.1
 [0.4.0]: https://github.com/CI124/auto-vim-ime/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/CI124/auto-vim-ime/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/CI124/auto-vim-ime/compare/v0.1.0...v0.2.0

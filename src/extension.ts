@@ -6,6 +6,7 @@ import { IMEStateManager } from './IMEStateManager';
 let astAnalyzer: ASTAnalyzer;
 let documentDebounceTimer: NodeJS.Timeout | null = null;
 let selectionDebounceTimer: NodeJS.Timeout | null = null;
+let modeDetectionTimer: NodeJS.Timeout | null = null;
 let outputChannel: vscode.OutputChannel;
 let statusBarItem: vscode.StatusBarItem;
 let imeManager: IIMEManager;
@@ -13,7 +14,9 @@ let imeStateManager: IMEStateManager;
 
 // 当前输入法状态
 let currentIMEMode: 'en' | 'zh' = 'en';
-// 上一次的光标样式，用于检测 Insert -> Normal 模式切换
+// 是否为 Vim 模式（启动时检测，运行期间不变）
+let isVimMode = false;
+// 上一次的光标样式，用于检测 Insert -> Normal 模式切换（仅 Vim 模式）
 let lastCursorStyle: vscode.TextEditorCursorStyle | undefined;
 
 /**
@@ -68,6 +71,10 @@ export async function activate(context: vscode.ExtensionContext) {
     outputChannel.appendLine('Extension auto-vim-ime is now active!');
     context.subscriptions.push(outputChannel);
 
+    // 检测 Vim 环境，决定运行模式
+    isVimMode = !!vscode.extensions.getExtension('vscodevim.vim')?.isActive;
+    outputChannel.appendLine(`[Mode] ${isVimMode ? 'Vim 模式' : '普通模式'}`);
+
     // 初始化 IME 管理器并输出检测日志
     imeManager = createImeManager(outputChannel);
 
@@ -104,31 +111,6 @@ export async function activate(context: vscode.ExtensionContext) {
     astAnalyzer = new ASTAnalyzer(context, outputChannel);
     await astAnalyzer.init();
     outputChannel.appendLine('AST Analyzer initialized.');
-
-    // ==========================================
-    // 监听：Esc 劫持，退回 Normal 模式的同时强制切换英文
-    // ==========================================
-    const escapeCommand = vscode.commands.registerCommand('auto-vim-ime.escape', () => {
-        outputChannel.appendLine(`[Escape] Intercepted Esc key in Insert Mode`);
-        forceEnglish();
-        vscode.commands.executeCommand('extension.vim_escape');
-    });
-
-    context.subscriptions.push(escapeCommand);
-
-    // 初始化 lastCursorStyle：从当前活动编辑器获取
-    const activeEditor = vscode.window.activeTextEditor;
-    if (activeEditor) {
-        lastCursorStyle = activeEditor.options.cursorStyle;
-    }
-
-    // 监听编辑器切换，更新 lastCursorStyle
-    const editorChange = vscode.window.onDidChangeActiveTextEditor((editor) => {
-        if (editor) {
-            lastCursorStyle = editor.options.cursorStyle;
-        }
-    });
-    context.subscriptions.push(editorChange);
 
     // 核心分析函数：检测光标上下文并切换输入法
     async function analyzeAndSwitch(editor: vscode.TextEditor) {
@@ -174,7 +156,7 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     }
 
-    // 检查是否在 Insert 模式
+    // 检查是否在 Insert 模式（仅 Vim 模式有意义）
     function isInInsertMode(editor: vscode.TextEditor): boolean {
         return editor.options.cursorStyle === vscode.TextEditorCursorStyle.Line;
     }
@@ -186,7 +168,9 @@ export async function activate(context: vscode.ExtensionContext) {
         }
         documentDebounceTimer = setTimeout(() => {
             const editor = vscode.window.activeTextEditor;
-            if (!editor || !isInInsertMode(editor)) return;
+            if (!editor) return;
+            // Vim 模式仅 Insert 模式下分析，普通模式始终分析
+            if (isVimMode && !isInInsertMode(editor)) return;
             analyzeAndSwitch(editor);
         }, 30);
     }
@@ -198,46 +182,125 @@ export async function activate(context: vscode.ExtensionContext) {
         }
         selectionDebounceTimer = setTimeout(() => {
             const editor = vscode.window.activeTextEditor;
-            if (!editor || !isInInsertMode(editor)) return;
+            if (!editor) return;
+            // Vim 模式仅 Insert 模式下分析，普通模式始终分析
+            if (isVimMode && !isInInsertMode(editor)) return;
             analyzeAndSwitch(editor);
         }, 50);
     }
 
     // ==========================================
-    // 监听：光标或选择区域变动，智能切换输入法
+    // Vim 模式专属：ESC 劫持 + 光标样式轮询
     // ==========================================
-    const selectionChange = vscode.window.onDidChangeTextEditorSelection((e) => {
-        if (!e.textEditor.document) return;
-
-        const currentCursorStyle = e.textEditor.options.cursorStyle;
-
-        // 检测 Insert -> Normal 模式切换（光标从 Line 变为 Block）
-        if (lastCursorStyle === vscode.TextEditorCursorStyle.Line &&
-            currentCursorStyle === vscode.TextEditorCursorStyle.Block) {
+    if (isVimMode) {
+        // ESC 劫持：退回 Normal 模式的同时强制切换英文
+        const escapeCommand = vscode.commands.registerCommand('auto-vim-ime.escape', () => {
+            outputChannel.appendLine(`[Escape] Intercepted Esc key in Insert Mode`);
             forceEnglish();
+            vscode.commands.executeCommand('extension.vim_escape');
+        });
+        context.subscriptions.push(escapeCommand);
+
+        // 光标样式轮询：检测 Normal → Insert 模式切换
+        function checkModeChange() {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) return;
+            if (lastCursorStyle === vscode.TextEditorCursorStyle.Block &&
+                editor.options.cursorStyle === vscode.TextEditorCursorStyle.Line) {
+                stopModeDetection();
+                lastCursorStyle = editor.options.cursorStyle;
+                outputChannel.appendLine('[ModeDetect] Normal → Insert 检测到，触发分析');
+                analyzeAndSwitch(editor);
+            }
         }
-        lastCursorStyle = currentCursorStyle;
 
-        // 只在 Insert 模式下处理
-        if (!isInInsertMode(e.textEditor)) return;
+        function startModeDetection() {
+            if (modeDetectionTimer) return;
+            checkModeChange();
+            modeDetectionTimer = setInterval(checkModeChange, 20);
+        }
 
-        scheduleAnalyzeFromSelection();
-    });
-    context.subscriptions.push(selectionChange);
+        function stopModeDetection() {
+            if (modeDetectionTimer) {
+                clearInterval(modeDetectionTimer);
+                modeDetectionTimer = null;
+            }
+        }
 
-    // ==========================================
-    // 监听：文档内容变化（输入文字时触发）
-    // 解决输入 // 开始注释时不触发的问题
-    // ==========================================
-    const documentChange = vscode.workspace.onDidChangeTextDocument((e) => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor || editor.document !== e.document) return;
-        if (!isInInsertMode(editor)) return;
-        scheduleAnalyzeFromDocument();
-    });
-    context.subscriptions.push(documentChange);
+        // 初始化 lastCursorStyle
+        const activeEditor = vscode.window.activeTextEditor;
+        if (activeEditor) {
+            lastCursorStyle = activeEditor.options.cursorStyle;
+            if (lastCursorStyle !== vscode.TextEditorCursorStyle.Line) {
+                startModeDetection();
+            }
+        }
 
-    outputChannel.appendLine('All event listeners registered. Extension is ready.');
+        // 监听编辑器切换
+        const editorChange = vscode.window.onDidChangeActiveTextEditor((editor) => {
+            if (editor) {
+                lastCursorStyle = editor.options.cursorStyle;
+                if (lastCursorStyle !== vscode.TextEditorCursorStyle.Line) {
+                    startModeDetection();
+                } else {
+                    stopModeDetection();
+                }
+            }
+        });
+        context.subscriptions.push(editorChange);
+
+        // 光标/选择变化：Vim 模式专属逻辑
+        const selectionChange = vscode.window.onDidChangeTextEditorSelection((e) => {
+            if (!e.textEditor.document) return;
+
+            const currentCursorStyle = e.textEditor.options.cursorStyle;
+
+            // 检测 Insert -> Normal 模式切换
+            if (lastCursorStyle === vscode.TextEditorCursorStyle.Line &&
+                currentCursorStyle === vscode.TextEditorCursorStyle.Block) {
+                forceEnglish();
+                startModeDetection();
+            }
+            lastCursorStyle = currentCursorStyle;
+
+            // 只在 Insert 模式下分析
+            if (!isInInsertMode(e.textEditor)) return;
+            stopModeDetection();
+            scheduleAnalyzeFromSelection();
+        });
+        context.subscriptions.push(selectionChange);
+
+        // 文档变化：Vim 模式仅 Insert 模式下分析
+        const documentChange = vscode.workspace.onDidChangeTextDocument((e) => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || editor.document !== e.document) return;
+            if (!isInInsertMode(editor)) return;
+            scheduleAnalyzeFromDocument();
+        });
+        context.subscriptions.push(documentChange);
+
+    } else {
+        // ==========================================
+        // 普通模式：全局分析，无需 Insert 模式检测
+        // ==========================================
+
+        // 光标/选择变化：始终分析
+        const selectionChange = vscode.window.onDidChangeTextEditorSelection((e) => {
+            if (!e.textEditor.document) return;
+            scheduleAnalyzeFromSelection();
+        });
+        context.subscriptions.push(selectionChange);
+
+        // 文档变化：始终分析
+        const documentChange = vscode.workspace.onDidChangeTextDocument((e) => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || editor.document !== e.document) return;
+            scheduleAnalyzeFromDocument();
+        });
+        context.subscriptions.push(documentChange);
+    }
+
+    outputChannel.appendLine(`[Mode] ${isVimMode ? 'Vim' : 'Normal'} mode listeners registered. Extension is ready.`);
 }
 
 export function deactivate() {
@@ -246,6 +309,9 @@ export function deactivate() {
     }
     if (selectionDebounceTimer) {
         clearTimeout(selectionDebounceTimer);
+    }
+    if (modeDetectionTimer) {
+        clearInterval(modeDetectionTimer);
     }
     if (imeStateManager) {
         imeStateManager.stopListening();

@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const watch = process.argv.includes('--watch');
-const outDir = path.join(__dirname, 'out');
+const outDir = path.join(__dirname, 'dist');
 
 async function build() {
     // 确保输出目录存在
@@ -16,20 +16,20 @@ async function build() {
     const wasmDest = path.join(outDir, 'wasm');
     if (fs.existsSync(wasmSrc)) {
         fs.cpSync(wasmSrc, wasmDest, { recursive: true });
-        console.log('[Build] Copied language wasm files to out/wasm/');
+        console.log('[Build] Copied language wasm files to dist/wasm/');
     }
 
     // 提取并拷贝 web-tree-sitter 需要的内核 tree-sitter.wasm
     const coreWasmSrc = path.join(__dirname, 'node_modules', 'web-tree-sitter', 'tree-sitter.wasm');
     if (fs.existsSync(coreWasmSrc)) {
         fs.copyFileSync(coreWasmSrc, path.join(outDir, 'tree-sitter.wasm'));
-        console.log('[Build] Copied core tree-sitter.wasm to out/');
+        console.log('[Build] Copied core tree-sitter.wasm to dist/');
     }
 
     const buildOptions = {
         entryPoints: ['src/extension.ts'],
         bundle: true,
-        outfile: 'out/extension.js',
+        outfile: 'dist/extension.js',
         external: ['vscode', 'x11'],
         format: 'cjs',
         platform: 'node',

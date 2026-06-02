@@ -3,13 +3,14 @@
 [![VS Code Extension](https://img.shields.io/badge/VS%20Code-Extension-blue.svg)](https://marketplace.visualstudio.com/items?itemName=auto-vim-ime)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-一个为 VSCodeVim 用户设计的输入法自动切换扩展，支持 **Linux** 和 **Windows**。基于 Tree-sitter AST 解析，根据代码上下文智能切换中/英文输入法。
+一个智能输入法自动切换扩展，支持 **Linux** 和 **Windows**。基于 Tree-sitter AST 解析，根据代码上下文智能切换中/英文输入法。同时支持 **VSCodeVim 用户**和**普通编辑器用户**。
 
 ## 功能特性
 
+- **双模式支持**：自动检测 VSCodeVim 扩展，Vim 用户和普通用户均可使用
 - **智能上下文检测**：光标在注释或字符串中时自动切换到中文输入法
 - **即时响应**：基于文本的快速注释检测，输入 `//`、`#` 等注释语法时立即切换
-- **ESC 强制切换**：按 ESC 退回 Normal 模式时强制切换到英文输入法
+- **ESC 强制切换**：Vim 模式下按 ESC 退回 Normal 模式时强制切换到英文输入法
 - **状态栏显示**：底部状态栏实时显示当前输入法状态，支持点击切换
 - **多语言支持**：JavaScript、TypeScript、Python、Go、Rust、C、C++、CSS、HTML、Lua、Java、Kotlin、Bash
 - **高性能**：Tree-sitter WASM 解析 + 同步文本快速检测，30ms 防抖响应
@@ -59,18 +60,28 @@ code --install-extension CI124.auto-vim-ime
 或使用命令行：
 
 ```bash
-code --install-extension auto-vim-ime-0.3.0.vsix
+code --install-extension auto-vim-ime-0.5.0-beta.1.vsix
 ```
 
 ## 使用方法
 
-1. 安装扩展后，扩展会自动激活
+1. 安装扩展后，扩展会自动激活并检测运行环境
 2. 底部状态栏会显示当前输入法状态（`EN` 或 `中`）
-3. 在 Insert 模式下：
-   - 光标移动到注释或字符串中 → 自动切换到中文
-   - 光标移动到代码区域 → 自动切换到英文
-4. 按 `ESC` 退回 Normal 模式 → 强制切换到英文
-5. 点击状态栏可手动切换输入法
+3. 点击状态栏可手动切换输入法
+
+### Vim 模式（安装了 VSCodeVim 扩展时）
+
+- 在 Insert 模式下：
+  - 光标移动到注释或字符串中 → 自动切换到中文
+  - 光标移动到代码区域 → 自动切换到英文
+- 按 `ESC` 退回 Normal 模式 → 强制切换到英文
+- 支持 `i`、`I`、`s`、`c` 等命令进入 Insert 模式时自动检测
+
+### 普通模式（未安装 VSCodeVim 扩展时）
+
+- 全局分析，无需进入特定模式
+- 输入 `//`、`#` 等注释语法时自动切换到中文
+- 回车或移动出注释区域时自动切换到英文
 
 ## 配置
 
@@ -88,7 +99,7 @@ code --install-extension auto-vim-ime-0.3.0.vsix
 | Linux | **Fcitx5**（推荐） | 自动读取 `~/.config/fcitx5/profile` 获取输入法列表 |
 | Linux | **Fcitx4** | 通过 `fcitx-remote` 命令切换 |
 | Linux | **IBus** | 通过 `ibus engine` 命令切换，支持 D-Bus 信号监听 |
-| Windows | **PowerShell + imm32** | 通过 Win32 `ImmSetConversionStatus` API 切换，支持所有 Windows 输入法 |
+| Windows | **PowerShell + Win32 API** | 通过 `SendMessageW(WM_INPUTLANGCHANGEREQUEST)` 切换键盘布局，支持所有 Windows 输入法 |
 
 扩展会自动检测系统平台和输入法框架。
 
@@ -107,6 +118,7 @@ auto-vim-ime/
 │   ├── download-wasm.js    # 下载 WASM 文件
 │   └── prepare-sandbox.js  # 准备测试沙盒
 ├── wasm/                   # Tree-sitter WASM 文件
+├── dist/                   # 编译输出目录
 ├── esbuild.js              # 构建脚本
 ├── package.json            # 项目配置
 └── tsconfig.json           # TypeScript 配置
@@ -152,22 +164,22 @@ npm run watch
 2. **AST 解析**：使用 Tree-sitter 解析代码，判断光标是否在注释/字符串中
 3. **输入法切换**：
    - Linux：通过 shell 命令调用 Fcitx5/Fcitx4/IBus
-   - Windows：通过 PowerShell 调用 Win32 imm32 API
+   - Windows：通过 PowerShell 调用 Win32 `SendMessageW` API 切换键盘布局
 4. **状态栏更新**：实时更新状态栏显示
 
 ## 常见问题
 
 ### 扩展不工作
 
-1. 检查是否安装了 VSCodeVim 扩展
+1. 查看 "Auto Vim IME" 输出面板的日志，确认运行模式（Vim/普通）
 2. Linux：检查系统中是否安装了 Fcitx5/Fcitx4/IBus
 3. Windows：确保 PowerShell 可用（Windows 7+ 自带）
-4. 查看 "Auto Vim IME" 输出面板的日志
+4. Vim 用户：检查是否安装了 VSCodeVim 扩展
 
 ### 输入法没有切换
 
 - **Linux**：确认输入法框架正在运行，检查 `PATH` 环境变量，尝试手动执行 `fcitx5-remote -n` 或 `ibus engine` 测试
-- **Windows**：确认 PowerShell 可用，尝试在 PowerShell 中手动执行 `[ImmHelper]::GetForegroundWindow()` 测试 imm32 API 是否正常
+- **Windows**：确认 PowerShell 可用，检查系统是否安装了中文和英文键盘布局
 
 ### 性能问题
 

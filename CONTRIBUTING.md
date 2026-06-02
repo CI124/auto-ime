@@ -47,6 +47,7 @@ auto-vim-ime/
 │   ├── download-wasm.js    # postinstall: 下载 WASM 文件
 │   └── prepare-sandbox.js  # F5 前置: 准备测试沙盒
 ├── wasm/                   # Tree-sitter WASM 语言文件
+├── dist/                   # 编译输出目录
 ├── esbuild.js              # 构建脚本
 ├── package.json            # 项目配置
 └── tsconfig.json           # TypeScript 配置
