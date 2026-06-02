@@ -8,10 +8,11 @@
 ## 功能特性
 
 - **智能上下文检测**：光标在注释或字符串中时自动切换到中文输入法
+- **即时响应**：基于文本的快速注释检测，输入 `//`、`#` 等注释语法时立即切换
 - **ESC 强制切换**：按 ESC 退回 Normal 模式时强制切换到英文输入法
 - **状态栏显示**：底部状态栏实时显示当前输入法状态，支持点击切换
 - **多语言支持**：JavaScript、TypeScript、Python、Go、Rust、C、C++、CSS
-- **高性能**：Tree-sitter WASM 解析，增量解析，50ms 防抖响应
+- **高性能**：Tree-sitter WASM 解析 + 同步文本快速检测，30ms 防抖响应
 
 ## 支持的语言和注释类型
 
@@ -86,7 +87,8 @@ auto-vim-ime/
 ├── src/                    # 源代码
 │   ├── extension.ts        # 扩展入口
 │   ├── ASTAnalyzer.ts      # Tree-sitter AST 分析器
-│   └── IMEManager.ts       # 输入法管理器
+│   ├── IMEManager.ts       # 输入法管理器
+│   └── IMEStateManager.ts  # 输入法状态监听管理器
 ├── scripts/                # 辅助脚本
 │   ├── download-wasm.js    # 下载 WASM 文件
 │   └── prepare-sandbox.js  # 准备测试沙盒
@@ -153,8 +155,8 @@ npm run watch
 
 ### 性能问题
 
-- 扩展使用 50ms 防抖，响应速度快
-- Tree-sitter 解析性能优秀（< 0.01ms/次）
+- 扩展使用 30ms 防抖（文档变化）和 50ms 防抖（光标移动），响应速度快
+- 注释检测优先走同步快速路径，Tree-sitter AST 分析仅在必要时执行（< 0.01ms/次）
 - 如果仍有延迟，检查系统输入法框架是否正常
 
 ## 贡献

@@ -5,7 +5,21 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [0.3.0] - 2026-06-02
+
+### 新增
+- 基于文本的快速注释检测（`isCursorInCommentFast`），输入 `//`、`#` 等注释语法时即时响应，无需等待 AST 解析
+- 文档变化与选择变化使用独立防抖定时器，避免事件竞争
+- AST 边界回退逻辑增强，向前最多回退 4 列
+
+### 修复
+- **修复输入 `//` 后输入法未立即切换的问题**：根因是防抖回调中捕获的 `editor` 引用可能过时，且两个事件源共享同一防抖定时器导致竞争条件。现在防抖回调中实时读取 `vscode.window.activeTextEditor`，文档变化事件使用 30ms 独立防抖
+
+### 优化
+- 文档变化防抖从 50ms 降低到 30ms，输入响应更快
+- 注释检测优先走同步快速路径，AST 分析仅在快速路径不确定时执行
+
+## [0.2.0] - 2025-01-01
 
 ### 新增
 - 状态栏显示当前输入法状态（`EN` / `中`）
@@ -37,5 +51,6 @@
 - 自动检测 Fcitx5/Fcitx4/IBus
 - 300ms 防抖响应
 
-[未发布]: https://github.com/your-username/auto-vim-ime/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/your-username/auto-vim-ime/releases/tag/v0.1.0
+[0.3.0]: https://github.com/CI124/auto-vim-ime/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/CI124/auto-vim-ime/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/CI124/auto-vim-ime/releases/tag/v0.1.0

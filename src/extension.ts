@@ -4,7 +4,8 @@ import { ASTAnalyzer } from './ASTAnalyzer';
 import { IMEStateManager } from './IMEStateManager';
 
 let astAnalyzer: ASTAnalyzer;
-let debounceTimer: NodeJS.Timeout | null = null;
+let documentDebounceTimer: NodeJS.Timeout | null = null;
+let selectionDebounceTimer: NodeJS.Timeout | null = null;
 let outputChannel: vscode.OutputChannel;
 let statusBarItem: vscode.StatusBarItem;
 let imeManager: IIMEManager;
@@ -138,7 +139,18 @@ export async function activate(context: vscode.ExtensionContext) {
         const document = editor.document;
         const position = editor.selections[0].active;
 
-        outputChannel.appendLine(`[AutoSwitch] 分析位置: line=${position.line}, char=${position.character}`);
+        // 快速路径：基于文本的注释检测（同步，无 AST 开销）
+        const fastResult = astAnalyzer.isCursorInCommentFast(document, position, document.languageId);
+        if (fastResult === true) {
+            outputChannel.appendLine(`[AutoSwitch] 快速检测: 注释区域 line=${position.line}, char=${position.character}`);
+            imeStateManager.markAutoSwitch();
+            imeManager.switchToChinese();
+            updateStatusBar('zh');
+            return;
+        }
+
+        // 完整 AST 分析
+        outputChannel.appendLine(`[AutoSwitch] AST 分析: line=${position.line}, char=${position.character}`);
         const astResult = await astAnalyzer.isCursorInCommentOrString(document, position);
 
         if (astResult.match) {
@@ -159,12 +171,28 @@ export async function activate(context: vscode.ExtensionContext) {
         return editor.options.cursorStyle === vscode.TextEditorCursorStyle.Line;
     }
 
-    // 带防抖的分析调度
-    function scheduleAnalyze(editor: vscode.TextEditor) {
-        if (debounceTimer) {
-            clearTimeout(debounceTimer);
+    // 文档变化时的分析调度（30ms 防抖，更快响应输入）
+    function scheduleAnalyzeFromDocument() {
+        if (documentDebounceTimer) {
+            clearTimeout(documentDebounceTimer);
         }
-        debounceTimer = setTimeout(() => analyzeAndSwitch(editor), 50);
+        documentDebounceTimer = setTimeout(() => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || !isInInsertMode(editor)) return;
+            analyzeAndSwitch(editor);
+        }, 30);
+    }
+
+    // 选择变化时的分析调度（50ms 防抖）
+    function scheduleAnalyzeFromSelection() {
+        if (selectionDebounceTimer) {
+            clearTimeout(selectionDebounceTimer);
+        }
+        selectionDebounceTimer = setTimeout(() => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || !isInInsertMode(editor)) return;
+            analyzeAndSwitch(editor);
+        }, 50);
     }
 
     // ==========================================
@@ -185,7 +213,7 @@ export async function activate(context: vscode.ExtensionContext) {
         // 只在 Insert 模式下处理
         if (!isInInsertMode(e.textEditor)) return;
 
-        scheduleAnalyze(e.textEditor);
+        scheduleAnalyzeFromSelection();
     });
     context.subscriptions.push(selectionChange);
 
@@ -197,7 +225,7 @@ export async function activate(context: vscode.ExtensionContext) {
         const editor = vscode.window.activeTextEditor;
         if (!editor || editor.document !== e.document) return;
         if (!isInInsertMode(editor)) return;
-        scheduleAnalyze(editor);
+        scheduleAnalyzeFromDocument();
     });
     context.subscriptions.push(documentChange);
 
@@ -205,8 +233,11 @@ export async function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
-    if (debounceTimer) {
-        clearTimeout(debounceTimer);
+    if (documentDebounceTimer) {
+        clearTimeout(documentDebounceTimer);
+    }
+    if (selectionDebounceTimer) {
+        clearTimeout(selectionDebounceTimer);
     }
     if (imeStateManager) {
         imeStateManager.stopListening();

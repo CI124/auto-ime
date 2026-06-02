@@ -122,6 +122,65 @@ export class ASTAnalyzer {
     }
 
     /**
+     * 快速文本级注释检测（同步，无 AST 开销）
+     * 返回: true = 确定在注释中, false = 确定不在, null = 不确定需 AST
+     */
+    public isCursorInCommentFast(document: vscode.TextDocument, position: vscode.Position, languageId: string): boolean | null {
+        const lineText = document.lineAt(position.line).text;
+        const col = position.character;
+        const textBeforeCursor = lineText.substring(0, col);
+
+        // 行注释快速检测
+        const lineCommentPatterns: Record<string, string[]> = {
+            'typescript': ['//'],
+            'typescriptreact': ['//'],
+            'javascript': ['//'],
+            'javascriptreact': ['//'],
+            'python': ['#'],
+            'go': ['//'],
+            'rust': ['//'],
+            'c': ['//'],
+            'cpp': ['//'],
+            'html': ['<!--'],
+            'css': ['//'],
+        };
+
+        const patterns = lineCommentPatterns[languageId];
+        if (patterns) {
+            for (const pattern of patterns) {
+                const idx = textBeforeCursor.indexOf(pattern);
+                if (idx >= 0) {
+                    // 检查注释标记前是否有未闭合的引号（简单启发式）
+                    const before = textBeforeCursor.substring(0, idx);
+                    const dq = (before.match(/"/g) || []).length;
+                    const sq = (before.match(/'/g) || []).length;
+                    const bq = (before.match(/`/g) || []).length;
+                    if (dq % 2 === 0 && sq % 2 === 0 && bq % 2 === 0) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // 块注释快速检测：光标是否在 /* 和 */ 之间
+        const fullText = document.getText();
+        const offset = document.offsetAt(position);
+        const beforeText = fullText.substring(0, offset);
+        const lastBlockOpen = beforeText.lastIndexOf('/*');
+        const lastBlockClose = beforeText.lastIndexOf('*/');
+        if (lastBlockOpen >= 0 && lastBlockOpen > lastBlockClose) {
+            return true;
+        }
+
+        // 光标前只有空白，不在注释中
+        if (textBeforeCursor.trim() === '') {
+            return false;
+        }
+
+        return null; // 不确定，需要 AST 分析
+    }
+
+    /**
      * 核心检测函数：光标是否在注释或字符串中
      * 使用增量解析提高性能
      */
@@ -153,10 +212,13 @@ export class ASTAnalyzer {
         // 用 namedDescendantForPosition 定位
         let cursorNode = tree.rootNode.namedDescendantForPosition({ row, column });
 
-        // 如果返回根节点（光标在文本末尾等边界位置），尝试用前一个位置
+        // 如果返回根节点（光标在文本末尾等边界位置），尝试向前回退
         if (!cursorNode || cursorNode.type === tree.rootNode.type) {
-            if (column > 0) {
-                cursorNode = tree.rootNode.namedDescendantForPosition({ row, column: column - 1 });
+            for (let c = column - 1; c >= 0 && c >= column - 4; c--) {
+                cursorNode = tree.rootNode.namedDescendantForPosition({ row, column: c });
+                if (cursorNode && cursorNode.type !== tree.rootNode.type) {
+                    break;
+                }
             }
             if (!cursorNode || cursorNode.type === tree.rootNode.type) {
                 return { match: false, type: null };
