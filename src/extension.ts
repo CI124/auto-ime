@@ -75,6 +75,13 @@ export async function activate(context: vscode.ExtensionContext) {
     });
     await imeStateManager.startListening();
 
+    // 监听手动切换，同步更新状态栏
+    imeStateManager.setOnChangeCallback((newIME: string) => {
+        const isEnglish = newIME.includes('keyboard') || newIME.includes('xkb') || newIME.includes('eng');
+        updateStatusBar(isEnglish ? 'en' : 'zh');
+        outputChannel.appendLine(`[StatusBar] 手动切换同步: ${newIME} → ${isEnglish ? 'EN' : '中'}`);
+    });
+
     // ==========================================
     // 状态栏：显示当前输入法状态
     // ==========================================
