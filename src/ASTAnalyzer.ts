@@ -31,23 +31,34 @@ export class ASTAnalyzer {
         'c': 'tree-sitter-c.wasm',
         'cpp': 'tree-sitter-cpp.wasm',
         'html': 'tree-sitter-html.wasm',
-        'css': 'tree-sitter-css.wasm'
+        'css': 'tree-sitter-css.wasm',
+        'lua': 'tree-sitter-lua.wasm',
+        'java': 'tree-sitter-java.wasm',
+        'kotlin': 'tree-sitter-kotlin.wasm',
+        'shellscript': 'tree-sitter-bash.wasm'
     };
 
-    // 目标节点映射字典配置：配置不同语言中的注释或字符串对应名称
-    private readonly TARGET_NODE_TYPES: Record<string, string[]> = {
-        'javascript': ['comment', 'string', 'template_string'],
-        'javascriptreact': ['comment', 'string', 'template_string'],
-        'typescript': ['comment', 'string', 'template_string'],
-        'typescriptreact': ['comment', 'string', 'template_string'],
-        'python': ['comment', 'string'],
-        'go': ['comment', 'interpreted_string_literal', 'raw_string_literal'],
-        'rust': ['line_comment', 'block_comment', 'string_literal', 'raw_string_literal'],
-        'c': ['comment', 'string_literal'],
-        'cpp': ['comment', 'string_literal', 'string_content', 'raw_string_literal'],
-        'html': ['comment'],
-        'css': ['comment']
+    // Tree-sitter Query 模式：捕获注释和字符串节点
+    private readonly COMMENT_QUERY: Record<string, string> = {
+        'javascript': `(comment) @comment\n(string) @comment\n(template_string) @comment`,
+        'javascriptreact': `(comment) @comment\n(string) @comment\n(template_string) @comment`,
+        'typescript': `(comment) @comment\n(string) @comment\n(template_string) @comment`,
+        'typescriptreact': `(comment) @comment\n(string) @comment\n(template_string) @comment`,
+        'python': `(comment) @comment\n(module . (expression_statement [(string) @comment (concatenated_string) @comment] (#match? @comment "^(\"\"\"|''')")))\n(function_definition body: (block . (expression_statement [(string) @comment (concatenated_string) @comment] (#match? @comment "^(\"\"\"|''')"))))\n(class_definition body: (block . (expression_statement [(string) @comment (concatenated_string) @comment] (#match? @comment "^(\"\"\"|''')"))))`,
+        'go': `(comment) @comment\n(interpreted_string_literal) @comment\n(raw_string_literal) @comment`,
+        'rust': `(line_comment) @comment\n(block_comment) @comment\n(string_literal) @comment\n(raw_string_literal) @comment`,
+        'c': `(comment) @comment\n(string_literal) @comment`,
+        'cpp': `(comment) @comment\n(string_literal) @comment\n(raw_string_literal) @comment`,
+        'html': `(comment) @comment`,
+        'css': `(comment) @comment`,
+        'lua': `(comment) @comment\n(string) @comment`,
+        'java': `(comment) @comment\n(string_literal) @comment`,
+        'kotlin': `(comment) @comment\n(string_literal) @comment`,
+        'shellscript': `(comment) @comment\n(string) @comment\n(raw_string) @comment\n(heredoc_body) @comment`
     };
+
+    // 编译后的 Query 对象缓存
+    private queryCache = new Map<string, Parser.Query | null>();
 
     constructor(context: vscode.ExtensionContext, outputChannel: vscode.OutputChannel) {
         this.extensionContext = context;
@@ -107,7 +118,7 @@ export class ASTAnalyzer {
         }
 
         const wasmPath = path.join(this.extensionContext.extensionPath, 'out', 'wasm', wasmFile);
-        
+
         try {
             const lang = await Parser.Language.load(wasmPath);
             this.languageMap.set(languageId, lang);
@@ -117,6 +128,32 @@ export class ASTAnalyzer {
             this.logError(`[AST] WASM load failed for ${languageId} at ${wasmPath}. AST parsing disabled for this language.`, error);
             // 记录已处理，避免重复加载报错
             this.languageMap.set(languageId, null);
+            return null;
+        }
+    }
+
+    /**
+     * 获取或创建编译后的 Query 对象
+     */
+    private getQuery(languageId: string, lang: Parser.Language): Parser.Query | null {
+        if (this.queryCache.has(languageId)) {
+            return this.queryCache.get(languageId) ?? null;
+        }
+
+        const querySource = this.COMMENT_QUERY[languageId];
+        if (!querySource) {
+            this.queryCache.set(languageId, null);
+            return null;
+        }
+
+        try {
+            const query = lang.query(querySource);
+            this.queryCache.set(languageId, query);
+            this.logInfo(`[AST] Query compiled for ${languageId}`);
+            return query;
+        } catch (error) {
+            this.logError(`[AST] Query compile failed for ${languageId}`, error);
+            this.queryCache.set(languageId, null);
             return null;
         }
     }
@@ -143,6 +180,10 @@ export class ASTAnalyzer {
             'cpp': ['//'],
             'html': ['<!--'],
             'css': ['//'],
+            'lua': ['--'],
+            'java': ['//'],
+            'kotlin': ['//'],
+            'shellscript': ['#'],
         };
 
         const patterns = lineCommentPatterns[languageId];
@@ -182,7 +223,7 @@ export class ASTAnalyzer {
 
     /**
      * 核心检测函数：光标是否在注释或字符串中
-     * 使用增量解析提高性能
+     * 使用 tree-sitter Query API 匹配注释/字符串节点
      */
     public async isCursorInCommentOrString(document: vscode.TextDocument, position: vscode.Position): Promise<{ match: boolean, type: string | null }> {
         if (!this.initialized || !this.parser) return { match: false, type: null };
@@ -191,13 +232,12 @@ export class ASTAnalyzer {
         const lang = await this.loadLanguage(languageId);
         if (!lang) return { match: false, type: null };
 
-        const targetTypes = this.TARGET_NODE_TYPES[languageId];
-        if (!targetTypes) return { match: false, type: null };
+        const query = this.getQuery(languageId, lang);
+        if (!query) return { match: false, type: null };
 
         this.parser.setLanguage(lang);
         const text = document.getText();
 
-        // 全量解析（WASM 增量解析有 bug，全量解析实测 0.01ms 足够快）
         let tree: Parser.Tree;
         try {
             tree = this.parser.parse(text);
@@ -205,46 +245,43 @@ export class ASTAnalyzer {
             return { match: false, type: null };
         }
 
-        // tree-sitter WASM 使用字符偏移，直接用 position.character
         const row = position.line;
         const column = position.character;
 
-        // 用 namedDescendantForPosition 定位
-        let cursorNode = tree.rootNode.namedDescendantForPosition({ row, column });
+        // 使用 Query 匹配所有注释/字符串节点
+        const matches = query.matches(tree.rootNode);
 
-        // 如果返回根节点（光标在文本末尾等边界位置），尝试向前回退
-        if (!cursorNode || cursorNode.type === tree.rootNode.type) {
-            for (let c = column - 1; c >= 0 && c >= column - 4; c--) {
-                cursorNode = tree.rootNode.namedDescendantForPosition({ row, column: c });
-                if (cursorNode && cursorNode.type !== tree.rootNode.type) {
-                    break;
+        for (const match of matches) {
+            for (const capture of match.captures) {
+                const node = capture.node;
+                const startRow = node.startPosition.row;
+                const startCol = node.startPosition.column;
+                const endRow = node.endPosition.row;
+                const endCol = node.endPosition.column;
+
+                // 检查光标是否在节点范围内
+                let inRange = false;
+                if (row > startRow && row < endRow) {
+                    inRange = true;
+                } else if (row === startRow && row === endRow) {
+                    inRange = column >= startCol && column < endCol;
+                } else if (row === startRow) {
+                    inRange = column >= startCol;
+                } else if (row === endRow) {
+                    inRange = column < endCol;
                 }
-            }
-            if (!cursorNode || cursorNode.type === tree.rootNode.type) {
-                return { match: false, type: null };
-            }
-        }
 
-        // 向上遍历 AST 确认是否为注释或字符串
-        let currentNode: Parser.SyntaxNode | null = cursorNode;
-        while (currentNode) {
-            const type = currentNode.type;
-            if (targetTypes.includes(type) || targetTypes.some(t => type.includes(t))) {
-                // 特殊处理：光标在注释节点最开头时，视为不在注释中
-                // 用户可能打算在 // 或 /* 前面写代码
-                // 字符串不做此处理，因为光标在引号上通常意味着要编辑字符串
-                if (type.includes('comment')) {
-                    const nodeStartRow = currentNode.startPosition.row;
-                    const nodeStartCol = currentNode.startPosition.column;
-                    // 光标在注释起始位置之前时，视为不在注释中
-                    // 例如缩进空白处：    // comment，光标在 // 前面的空白
-                    if (row === nodeStartRow && column <= nodeStartCol) {
-                        return { match: false, type: null };
+                if (!inRange) continue;
+
+                // 注释特殊处理：光标在注释起始位置之前时，视为不在注释中
+                if (capture.name === 'comment' && node.type.includes('comment')) {
+                    if (row === startRow && column <= startCol) {
+                        continue;
                     }
                 }
-                return { match: true, type: type };
+
+                return { match: true, type: capture.name };
             }
-            currentNode = currentNode.parent;
         }
 
         return { match: false, type: null };

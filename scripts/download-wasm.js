@@ -14,7 +14,11 @@ const LANGUAGES = [
   'go',
   'rust',
   'html',
-  'css'
+  'css',
+  'lua',
+  'java',
+  'kotlin',
+  'bash'
 ];
 
 if (!fs.existsSync(WASM_DIR)) {

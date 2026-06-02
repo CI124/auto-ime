@@ -5,6 +5,21 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.0] - 2026-06-02
+
+### 新增
+- **Windows 平台支持**：通过 PowerShell + Win32 API (`SendMessageW(WM_INPUTLANGCHANGEREQUEST)`) 切换键盘布局
+- **扩展语言支持**：新增 Lua、Java、Kotlin、Bash 四种语言的 AST 分析
+- **切换前查询优化**：自动切换前检查当前输入法状态，已是目标状态时跳过执行，减少不必要的进程启动
+
+### 优化
+- **AST 分析重构**：用 tree-sitter Query API 替代手动节点遍历，代码更简洁、新增语言更方便
+- 为每种语言使用声明式 `.scm` 查询模式捕获注释和字符串节点
+- Query 对象编译后缓存，避免重复编译开销
+
+### 修复
+- 更新 README 中的语言支持表，补充 HTML、Lua、Java、Kotlin、Bash
+
 ## [0.3.0] - 2026-06-02
 
 ### 新增
@@ -51,6 +66,7 @@
 - 自动检测 Fcitx5/Fcitx4/IBus
 - 300ms 防抖响应
 
+[0.4.0]: https://github.com/CI124/auto-vim-ime/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/CI124/auto-vim-ime/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/CI124/auto-vim-ime/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/CI124/auto-vim-ime/releases/tag/v0.1.0

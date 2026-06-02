@@ -36,9 +36,11 @@ function updateStatusBar(mode: 'en' | 'zh') {
  * 强制切换到英文（ESC 时调用）
  */
 function forceEnglish() {
-    imeManager.switchToEnglish();
-    updateStatusBar('en');
-    outputChannel.appendLine('[ESC] Forced switch to English');
+    if (currentIMEMode !== 'en') {
+        imeManager.switchToEnglish();
+        updateStatusBar('en');
+        outputChannel.appendLine('[ESC] Forced switch to English');
+    }
     // 重置手动覆盖模式
     imeStateManager.resetManualOverride();
 }
@@ -142,10 +144,12 @@ export async function activate(context: vscode.ExtensionContext) {
         // 快速路径：基于文本的注释检测（同步，无 AST 开销）
         const fastResult = astAnalyzer.isCursorInCommentFast(document, position, document.languageId);
         if (fastResult === true) {
-            outputChannel.appendLine(`[AutoSwitch] 快速检测: 注释区域 line=${position.line}, char=${position.character}`);
-            imeStateManager.markAutoSwitch();
-            imeManager.switchToChinese();
-            updateStatusBar('zh');
+            if (currentIMEMode !== 'zh') {
+                outputChannel.appendLine(`[AutoSwitch] 快速检测: 注释区域 line=${position.line}, char=${position.character}`);
+                imeStateManager.markAutoSwitch();
+                imeManager.switchToChinese();
+                updateStatusBar('zh');
+            }
             return;
         }
 
@@ -154,15 +158,19 @@ export async function activate(context: vscode.ExtensionContext) {
         const astResult = await astAnalyzer.isCursorInCommentOrString(document, position);
 
         if (astResult.match) {
-            outputChannel.appendLine(`[AutoSwitch] 检测到 ${astResult.type}，切换到中文`);
-            imeStateManager.markAutoSwitch();
-            imeManager.switchToChinese();
-            updateStatusBar('zh');
+            if (currentIMEMode !== 'zh') {
+                outputChannel.appendLine(`[AutoSwitch] 检测到 ${astResult.type}，切换到中文`);
+                imeStateManager.markAutoSwitch();
+                imeManager.switchToChinese();
+                updateStatusBar('zh');
+            }
         } else {
-            outputChannel.appendLine('[AutoSwitch] 代码区域，切换到英文');
-            imeStateManager.markAutoSwitch();
-            imeManager.switchToEnglish();
-            updateStatusBar('en');
+            if (currentIMEMode !== 'en') {
+                outputChannel.appendLine('[AutoSwitch] 代码区域，切换到英文');
+                imeStateManager.markAutoSwitch();
+                imeManager.switchToEnglish();
+                updateStatusBar('en');
+            }
         }
     }
 
