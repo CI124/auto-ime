@@ -5,6 +5,32 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.0-beta] - 2026-06-03
+
+> **⚠ 实验性版本**：以下所有变更均未在 Windows 实机上验证，仅在 Linux 上通过构建和逻辑审查。请谨慎使用，欢迎反馈问题。
+
+### 新增
+- **koffi FFI 基础层**：用 koffi（Node.js FFI）直接调用 `user32.dll` / `imm32.dll`，替代 PowerShell 方案，理论性能从 ~100ms 提升到 <1ms
+- **IMM32 兼容层**：通过 `ImmGetConversionStatus` / `ImmSetConversionStatus` 直接读写输入法中英文模式，支持搜狗/百度等 IMM32 输入法
+- **TSF 检测**：通过 koffi 调用 `ole32.dll` COM 函数检测 TSF 输入法（如微软拼音）
+- **TSF compartment 读写**：通过 PowerShell COM 互操作访问 `ITfCompartment`，作为 IMM32 失败时的降级路径
+- **三层切换策略**：IMM32 → TSF compartment → 键盘布局切换，自动降级
+- **多语言支持**：新增繁体中文(台湾1028/香港3076/澳门5124)和新加坡中文(4100)的 Language ID 支持
+- **窗口焦点恢复**：`onDidChangeWindowState` 监听，窗口重新获得焦点时同步 IME 状态
+- **光标样式事件**：`onDidChangeTextEditorOptions` 监听，Vim 模式 Insert↔Normal 切换检测更精确
+- **可配置轮询间隔**：新增 `auto-ime.windows.pollingInterval` 配置项（默认 100ms，范围 50-500）
+- **PowerShell 回退**：koffi 加载失败时自动降级到 PowerShell 方案
+
+### 优化
+- Windows IME 切换从 PowerShell 子进程改为 koffi FFI 直接调用
+- `WindowsIMEManager` 重构为使用 `IMESwitcher` 统一切换入口
+- `queryMode()` 增加活跃管理器实例回退，修复 koffi 不可用时硬编码返回 `'en'` 的问题
+
+### 已知问题
+- 所有 Windows 相关代码（koffi FFI、IMM32、TSF）均未在 Windows 实机测试
+- TSF compartment 读写依赖 PowerShell COM，性能较慢（~100ms）
+- `ASTAnalyzer.ts` 存在预先的 `esModuleInterop` 类型错误（非本次引入）
+
 ## [0.5.0] - 2026-06-03
 
 ### 新增
@@ -87,6 +113,7 @@
 - 自动检测 Fcitx5/Fcitx4/IBus
 - 300ms 防抖响应
 
+[0.6.0-beta]: https://github.com/CI124/auto-ime/compare/v0.5.0...v0.6.0-beta
 [0.5.0]: https://github.com/CI124/auto-ime/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/CI124/auto-ime/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/CI124/auto-ime/compare/v0.2.0...v0.3.0

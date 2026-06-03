@@ -207,6 +207,19 @@ export async function activate(context: vscode.ExtensionContext) {
         });
         disposables.push(documentChange);
 
+        // 监听光标样式变化（比轮询更精确）
+        const optionsChange = vscode.window.onDidChangeTextEditorOptions((e) => {
+            if (!isVimMode &&
+                e.textEditor.options.cursorStyle === vscode.TextEditorCursorStyle.Block) {
+                if (isVimVerified()) {
+                    switchToVimMode();
+                    return;
+                }
+            }
+            scheduleAnalyze();
+        });
+        disposables.push(optionsChange);
+
         return disposables;
     }
 
@@ -299,6 +312,26 @@ export async function activate(context: vscode.ExtensionContext) {
         });
         disposables.push(documentChange);
 
+        // 监听光标样式变化：精确检测 Normal → Insert 切换（替代轮询）
+        const optionsChange = vscode.window.onDidChangeTextEditorOptions((e) => {
+            const currentCursor = e.textEditor.options.cursorStyle;
+            if (lastCursorStyle === vscode.TextEditorCursorStyle.Block &&
+                currentCursor === vscode.TextEditorCursorStyle.Line) {
+                // Normal → Insert
+                stopModeDetection();
+                lastCursorStyle = currentCursor;
+                outputChannel.appendLine('[ModeDetect] Options: Normal → Insert');
+                analyzeAndSwitch(e.textEditor);
+            } else if (lastCursorStyle === vscode.TextEditorCursorStyle.Line &&
+                       currentCursor === vscode.TextEditorCursorStyle.Block) {
+                // Insert → Normal
+                forceEnglish();
+                startModeDetection();
+                lastCursorStyle = currentCursor;
+            }
+        });
+        disposables.push(optionsChange);
+
         return disposables;
     }
 
@@ -337,6 +370,19 @@ export async function activate(context: vscode.ExtensionContext) {
     }
 
     outputChannel.appendLine(`[Mode] ${isVimMode ? 'Vim' : 'Normal'} mode listeners registered. Extension is ready.`);
+
+    // 窗口焦点恢复时重新查询输入法状态
+    const windowStateChange = vscode.window.onDidChangeWindowState((e) => {
+        if (e.focused) {
+            const mode = imeManager.queryCurrentMode();
+            if (mode && mode !== currentIMEMode) {
+                outputChannel.appendLine(`[Focus] IME state changed externally: ${currentIMEMode} → ${mode}`);
+                updateStatusBar(mode);
+            }
+        }
+    });
+    context.subscriptions.push(windowStateChange);
+
 }
 
 export function deactivate() {
