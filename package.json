@@ -3,7 +3,7 @@
   "displayName": "Auto Vim IME",
   "description": "Auto switch IME for VSCodeVim users using AST (Linux & Windows)",
   "publisher": "CI124",
-  "version": "0.5.0-beta.1",
+  "version": "0.5.0-beta.2",
   "repository": {
     "type": "git",
     "url": "https://github.com/CI124/auto-vim-ime.git"
