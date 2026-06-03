@@ -1,6 +1,6 @@
-# Auto Vim IME
+# Auto IME
 
-[![VS Code Extension](https://img.shields.io/badge/VS%20Code-Extension-blue.svg)](https://marketplace.visualstudio.com/items?itemName=auto-vim-ime)
+[![VS Code Extension](https://img.shields.io/badge/VS%20Code-Extension-blue.svg)](https://marketplace.visualstudio.com/items?itemName=auto-ime)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 一个智能输入法自动切换扩展，支持 **Linux** 和 **Windows**。基于 Tree-sitter AST 解析，根据代码上下文智能切换中/英文输入法。同时支持 **VSCodeVim 用户**和**普通编辑器用户**。
@@ -39,18 +39,18 @@
 
 1. 打开 VS Code
 2. 按 `Ctrl+Shift+X` 打开扩展面板
-3. 搜索 `Auto Vim IME`
+3. 搜索 `Auto IME`
 4. 点击 **Install** 安装
 
 或使用命令行：
 
 ```bash
-code --install-extension CI124.auto-vim-ime
+code --install-extension CI124.auto-ime
 ```
 
 ### 方式二：手动安装（.vsix 文件）
 
-从 [GitHub Releases](https://github.com/CI124/auto-vim-ime/releases) 下载最新版本的 `.vsix` 文件，然后：
+从 [GitHub Releases](https://github.com/CI124/auto-ime/releases) 下载最新版本的 `.vsix` 文件，然后：
 
 1. 打开 VS Code
 2. 按 `Ctrl+Shift+P` 打开命令面板
@@ -60,7 +60,7 @@ code --install-extension CI124.auto-vim-ime
 或使用命令行：
 
 ```bash
-code --install-extension auto-vim-ime-0.5.0-beta.1.vsix
+code --install-extension auto-ime-0.5.0-beta.1.vsix
 ```
 
 ## 使用方法
@@ -85,12 +85,12 @@ code --install-extension auto-vim-ime-0.5.0-beta.1.vsix
 
 ## 配置
 
-在 VS Code 设置中搜索 `auto-vim-ime`：
+在 VS Code 设置中搜索 `auto-ime`：
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| `auto-vim-ime.ibus.englishEngine` | `xkb:us::eng` | IBus 英文引擎名称 |
-| `auto-vim-ime.ibus.chineseEngine` | `libpinyin` | IBus 中文引擎名称 |
+| `auto-ime.ibus.englishEngine` | `xkb:us::eng` | IBus 英文引擎名称 |
+| `auto-ime.ibus.chineseEngine` | `libpinyin` | IBus 中文引擎名称 |
 
 ## 支持的输入法框架
 
@@ -108,7 +108,7 @@ code --install-extension auto-vim-ime-0.5.0-beta.1.vsix
 ### 项目结构
 
 ```
-auto-vim-ime/
+auto-ime/
 ├── src/                    # 源代码
 │   ├── extension.ts        # 扩展入口
 │   ├── ASTAnalyzer.ts      # Tree-sitter AST 分析器
@@ -149,7 +149,7 @@ npm run watch
 
 1. 按 `F5` 启动调试
 2. 在弹出的沙盒窗口中测试功能
-3. 查看 "Auto Vim IME" 输出面板的日志
+3. 查看 "Auto IME" 输出面板的日志
 
 ## 技术栈
 
@@ -171,7 +171,7 @@ npm run watch
 
 ### 扩展不工作
 
-1. 查看 "Auto Vim IME" 输出面板的日志，确认运行模式（Vim/普通）
+1. 查看 "Auto IME" 输出面板的日志，确认运行模式（Vim/普通）
 2. Linux：检查系统中是否安装了 Fcitx5/Fcitx4/IBus
 3. Windows：确保 PowerShell 可用（Windows 7+ 自带）
 4. Vim 用户：检查是否安装了 VSCodeVim 扩展

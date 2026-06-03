@@ -1,6 +1,6 @@
 # 贡献指南
 
-感谢您对 Auto Vim IME 项目的关注！本文档将帮助您了解如何参与项目开发。
+感谢您对 Auto IME 项目的关注！本文档将帮助您了解如何参与项目开发。
 
 ## 开发环境搭建
 
@@ -14,8 +14,8 @@
 
 1. **克隆仓库**
    ```bash
-   git clone https://github.com/your-username/auto-vim-ime.git
-   cd auto-vim-ime
+   git clone https://github.com/your-username/auto-ime.git
+   cd auto-ime
    ```
 
 2. **安装依赖**
@@ -38,7 +38,7 @@
 ## 项目结构
 
 ```
-auto-vim-ime/
+auto-ime/
 ├── src/                    # 源代码
 │   ├── extension.ts        # 扩展入口，事件监听和生命周期管理
 │   ├── ASTAnalyzer.ts      # Tree-sitter AST 分析器
@@ -166,7 +166,7 @@ console.log(tree.rootNode.toString());
 
 ### 检查日志
 
-查看 "Auto Vim IME" 输出面板：
+查看 "Auto IME" 输出面板：
 - `[AST]`：AST 解析日志
 - `[IME]`：输入法切换日志
 - `[Mode]`：模式切换日志
@@ -211,7 +211,7 @@ console.log(tree.rootNode.toString());
 - 输入法框架和版本
 - 扩展版本
 - 复现步骤
-- 错误日志（"Auto Vim IME" 输出面板）
+- 错误日志（"Auto IME" 输出面板）
 
 ## 许可证
 

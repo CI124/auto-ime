@@ -1,7 +1,7 @@
 {
-  "name": "auto-vim-ime",
-  "displayName": "Auto Vim IME",
-  "description": "Auto switch IME for VSCodeVim users using AST (Linux & Windows)",
+  "name": "auto-ime",
+  "displayName": "Auto IME",
+  "description": "Auto switch input method based on code context using AST (Linux & Windows)",
   "publisher": "CI124",
   "version": "0.5.0",
   "repository": {
@@ -22,35 +22,35 @@
   "contributes": {
     "commands": [
       {
-        "command": "auto-vim-ime.escape",
+        "command": "auto-ime.escape",
         "title": "Vim Escape and Switch to English"
       },
       {
-        "command": "auto-vim-ime.toggleIME",
+        "command": "auto-ime.toggleIME",
         "title": "Toggle IME (Chinese/English)"
       }
     ],
     "keybindings": [
       {
-        "command": "auto-vim-ime.escape",
+        "command": "auto-ime.escape",
         "key": "escape",
         "when": "vim.mode == 'Insert' && editorTextFocus"
       },
       {
-        "command": "auto-vim-ime.toggleIME",
+        "command": "auto-ime.toggleIME",
         "key": "ctrl+shift+space",
         "when": "editorTextFocus"
       }
     ],
     "configuration": {
-      "title": "Auto Vim IME",
+      "title": "Auto IME",
       "properties": {
-        "auto-vim-ime.ibus.englishEngine": {
+        "auto-ime.ibus.englishEngine": {
           "type": "string",
           "default": "xkb:us::eng",
           "description": "IBus engine name for English (find using 'ibus engine')"
         },
-        "auto-vim-ime.ibus.chineseEngine": {
+        "auto-ime.ibus.chineseEngine": {
           "type": "string",
           "default": "libpinyin",
           "description": "IBus engine name for Chinese (find using 'ibus engine')"

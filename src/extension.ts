@@ -67,8 +67,8 @@ function toggleIME() {
 
 export async function activate(context: vscode.ExtensionContext) {
     // 引入扩展专属输出通道
-    outputChannel = vscode.window.createOutputChannel("Auto Vim IME");
-    outputChannel.appendLine('Extension auto-vim-ime is now active!');
+    outputChannel = vscode.window.createOutputChannel("Auto IME");
+    outputChannel.appendLine('Extension auto-ime is now active!');
     context.subscriptions.push(outputChannel);
 
     // 初始化 IME 管理器并输出检测日志
@@ -92,13 +92,13 @@ export async function activate(context: vscode.ExtensionContext) {
     // 状态栏：显示当前输入法状态
     // ==========================================
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-    statusBarItem.command = 'auto-vim-ime.toggleIME';
+    statusBarItem.command = 'auto-ime.toggleIME';
     updateStatusBar('en');
     statusBarItem.show();
     context.subscriptions.push(statusBarItem);
 
     // 注册状态栏点击切换命令
-    const toggleCommand = vscode.commands.registerCommand('auto-vim-ime.toggleIME', () => {
+    const toggleCommand = vscode.commands.registerCommand('auto-ime.toggleIME', () => {
         toggleIME();
     });
     context.subscriptions.push(toggleCommand);
@@ -214,7 +214,7 @@ export async function activate(context: vscode.ExtensionContext) {
         const disposables: vscode.Disposable[] = [];
 
         // ESC 劫持：退回 Normal 模式的同时强制切换英文
-        const escapeCommand = vscode.commands.registerCommand('auto-vim-ime.escape', () => {
+        const escapeCommand = vscode.commands.registerCommand('auto-ime.escape', () => {
             outputChannel.appendLine(`[Escape] Intercepted Esc key in Insert Mode`);
             forceEnglish();
             vscode.commands.executeCommand('extension.vim_escape');
