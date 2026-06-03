@@ -87,8 +87,8 @@
 - 自动检测 Fcitx5/Fcitx4/IBus
 - 300ms 防抖响应
 
-[0.5.0]: https://github.com/CI124/auto-vim-ime/compare/v0.4.0...v0.5.0
-[0.4.0]: https://github.com/CI124/auto-vim-ime/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/CI124/auto-vim-ime/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/CI124/auto-vim-ime/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/CI124/auto-vim-ime/releases/tag/v0.1.0
+[0.5.0]: https://github.com/CI124/auto-ime/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/CI124/auto-ime/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/CI124/auto-ime/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/CI124/auto-ime/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/CI124/auto-ime/releases/tag/v0.1.0

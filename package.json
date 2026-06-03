@@ -6,7 +6,7 @@
   "version": "0.5.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/CI124/auto-vim-ime.git"
+    "url": "https://github.com/CI124/auto-ime.git"
   },
   "engines": {
     "vscode": "^1.80.0"
