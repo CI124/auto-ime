@@ -5,20 +5,26 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [0.5.0-beta.1] - 2026-06-02
+## [0.5.0] - 2026-06-03
 
 ### 新增
 - **普通模式支持**：未安装 Vim 扩展的用户可直接使用，全局分析注释/字符串区域并自动切换输入法
-- **Vim 模式自动检测**：启动时自动检测 VSCodeVim 扩展，决定运行模式
-- **光标样式轮询**：通过 20ms 间隔轮询检测 Vim `i`、`I`、`s`、`c` 等命令触发的 Normal→Insert 切换
+- **Vim 延迟检测**：通过光标样式双向验证（Block + isActive）自动识别 Vim 扩展延迟加载，支持运行时自动切换模式
+- **手动覆盖恢复**：用户手动切换输入法后自动暂停分析，光标移动到不同行或 Vim 按 ESC 后恢复
 
 ### 优化
+- **分析调度合并**：selection/document 两个 debounce 合并为统一 10ms 调度，消除双重分析竞争
+- **轮询检测修复**：checkModeChange 不依赖 lastCursorStyle，避免频繁 ESC→i 切换时漏检
 - **构建输出重构**：编译产物统一输出到 `dist/` 目录，项目结构更清晰
-- **项目清理**：移除旧版本 .vsix 文件和临时目录
 
 ### 修复
+- 修复普通模式下在注释中手动切换输入法后自动分析被永久暂停的问题
+- 修复 `toggleIME` 错误调用 `markAutoSwitch` 导致轮询误判手动切换为自动切换
 - 修复 Vim `i` 键进入 Insert 模式后输入法未自动切换的问题
 - 修复 Normal 模式下事件监听器与 Vim 模式互相干扰的问题
+
+### 待办
+- Windows 平台实际测试适配（当前仅 Linux 已验证）
 
 ## [0.4.0] - 2026-06-02
 
@@ -81,7 +87,7 @@
 - 自动检测 Fcitx5/Fcitx4/IBus
 - 300ms 防抖响应
 
-[0.5.0-beta.1]: https://github.com/CI124/auto-vim-ime/compare/v0.4.0...v0.5.0-beta.1
+[0.5.0]: https://github.com/CI124/auto-vim-ime/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/CI124/auto-vim-ime/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/CI124/auto-vim-ime/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/CI124/auto-vim-ime/compare/v0.1.0...v0.2.0
