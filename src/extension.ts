@@ -61,7 +61,8 @@ function toggleIME() {
         updateStatusBar('zh');
         outputChannel.appendLine('[StatusBar] User toggled to Chinese');
     }
-    // 不标记自动切换，让轮询正确识别为手动切换 → 设置 manualOverride
+    // 立即阻止自动分析，避免 10ms debounce 后覆盖用户操作
+    imeStateManager.markManualSwitch();
 }
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -112,10 +113,10 @@ export async function activate(context: vscode.ExtensionContext) {
         const document = editor.document;
         const position = editor.selections[0].active;
 
-        // 手动覆盖模式：光标移动到新位置时恢复自动分析
+        // 手动覆盖模式：光标移动到不同行时恢复自动分析
         if (imeStateManager.isManualOverride()) {
-            if (imeStateManager.isDifferentPosition(position.line, position.character)) {
-                outputChannel.appendLine('[AutoSwitch] 光标移动，恢复自动分析');
+            if (imeStateManager.isDifferentPosition(position.line)) {
+                outputChannel.appendLine('[AutoSwitch] 换行，恢复自动分析');
                 imeStateManager.resetManualOverride();
             } else {
                 outputChannel.appendLine('[AutoSwitch] 手动覆盖模式，跳过自动切换');
