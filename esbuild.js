@@ -6,12 +6,12 @@ const watch = process.argv.includes('--watch');
 const outDir = path.join(__dirname, 'dist');
 
 async function build() {
-    // 确保输出目录存在
+    // Ensure output directory exists
     if (!fs.existsSync(outDir)) {
         fs.mkdirSync(outDir, { recursive: true });
     }
 
-    // 拷贝存放 AST 语言包的 wasm 目录
+    // Copy AST language WASM files to dist/wasm/
     const wasmSrc = path.join(__dirname, 'wasm');
     const wasmDest = path.join(outDir, 'wasm');
     if (fs.existsSync(wasmSrc)) {
@@ -19,7 +19,7 @@ async function build() {
         console.log('[Build] Copied language wasm files to dist/wasm/');
     }
 
-    // 提取并拷贝 web-tree-sitter 需要的内核 tree-sitter.wasm
+    // Copy web-tree-sitter core tree-sitter.wasm to dist/
     const coreWasmSrc = path.join(__dirname, 'node_modules', 'web-tree-sitter', 'tree-sitter.wasm');
     if (fs.existsSync(coreWasmSrc)) {
         fs.copyFileSync(coreWasmSrc, path.join(outDir, 'tree-sitter.wasm'));

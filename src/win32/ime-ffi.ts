@@ -102,9 +102,8 @@ export function getTrueForegroundWindow(): bigint {
     let hwnd = BigInt(GetForegroundWindow() as any);
     if (!hwnd) return 0n;
 
-    const tidBuf = [0];
-    GetWindowThreadProcessId(hwnd, tidBuf);
-    const targetTid = Number(tidBuf[0]);
+    const pidBuf = [0];
+    const targetTid = GetWindowThreadProcessId(hwnd, pidBuf) as number; // return value = Thread ID
     const currentTid = Number(GetCurrentThreadId() as any);
 
     if (currentTid !== targetTid) {
@@ -125,9 +124,9 @@ export function getCurrentLanguageId(): number {
     const hwnd = getTrueForegroundWindow();
     if (!hwnd) return 0;
 
-    const tidBuf = [0];
-    GetWindowThreadProcessId(hwnd, tidBuf);
-    const hkl = BigInt(GetKeyboardLayout(Number(tidBuf[0])) as any);
+    const pidBuf = [0];
+    const tid = GetWindowThreadProcessId(hwnd, pidBuf) as number; // return value = Thread ID
+    const hkl = BigInt(GetKeyboardLayout(tid) as any);
     return Number(hkl & 0xFFFFn);
 }
 
@@ -219,12 +218,10 @@ export function queryIMEMode(logger?: LogSink): 'zh' | 'en' | null {
     if (langId !== 0) {
         const result = isChineseLangId(langId) ? 'zh' : isEnglishLangId(langId) ? 'en' : null;
         if (result) {
-            logger?.debug(`[FFI] queryIMEMode: imm32 failed, langId=${langId} → ${result}`);
             return result;
         }
     }
 
-    logger?.debug('[FFI] queryIMEMode: all methods failed → null');
     return null;
 }
 

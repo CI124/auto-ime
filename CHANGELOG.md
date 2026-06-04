@@ -5,6 +5,15 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.3-beta] - 2026-06-04
+
+### 修复
+- **修复 `queryIMEMode` Language ID 兜底永远失败**：`GetWindowThreadProcessId` 返回值是 Thread ID，但代码把输出参数 `pidBuf[0]`（Process ID）传给了 `GetKeyboardLayout`。修正为使用返回值作为 Thread ID
+- **修复 `getTrueForegroundWindow` 线程附加使用错误 ID**：同上，`AttachThreadInput` 应使用 Thread ID 而非 Process ID
+- **修复 DEBUG 日志洪水**：移除 `queryIMEMode` 每次调用的 FFI debug 日志；`queryMode` 失败日志改为首次 INFO + 之后每 30 秒 DEBUG 节流
+- **修复 Debounce 日志噪声**：移除 `scheduleAnalyze` 中每次事件触发的 debug 日志
+- **修复 esbuild.js 编码损坏**：中文注释改为英文，避免 PowerShell 环境下编码崩溃
+
 ## [0.6.2-beta] - 2026-06-04
 
 ### 新增
@@ -208,6 +217,7 @@
 - 自动检测 Fcitx5/Fcitx4/IBus
 - 300ms 防抖响应
 
+[0.6.3-beta]: https://github.com/CI124/auto-ime/compare/v0.6.2-beta...v0.6.3-beta
 [0.6.2-beta]: https://github.com/CI124/auto-ime/compare/v0.6.1-beta...v0.6.2-beta
 [0.6.1-beta]: https://github.com/CI124/auto-ime/compare/v0.6.0-beta...v0.6.1-beta
 [0.6.0-beta]: https://github.com/CI124/auto-ime/compare/v0.5.0...v0.6.0-beta

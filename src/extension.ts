@@ -204,7 +204,6 @@ export async function activate(context: vscode.ExtensionContext) {
         const lineCount = editor?.document.lineCount ?? 0;
         // 小文件 (<500行): 10ms | 中文件 (500-5000行): 30ms | 大文件 (>5000行): 60ms
         const delay = lineCount > 5000 ? 60 : lineCount > 500 ? 30 : 10;
-        logger.debug(`[Analyze] Debounce: ${delay}ms (${lineCount} lines)`);
         analyzeDebounceTimer = setTimeout(() => {
             if (!editor) return;
             if (isVimMode && !isInInsertMode(editor)) return;
