@@ -3,6 +3,8 @@
 [![VS Code Extension](https://img.shields.io/badge/VS%20Code-Extension-blue.svg)](https://marketplace.visualstudio.com/items?itemName=auto-ime)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
+> **[English](#english)** | 中文
+
 一个智能输入法自动切换扩展，支持 **Linux** 和 **Windows**。基于 Tree-sitter AST 解析，根据代码上下文智能切换中/英文输入法。同时支持 **VSCodeVim 用户**和**普通编辑器用户**。
 
 ## 功能特性
@@ -36,216 +38,221 @@
 
 ## 安装
 
-### 方式一：VS Code Marketplace 安装
+### 方式一：VS Code Marketplace
 
 1. 打开 VS Code
 2. 按 `Ctrl+Shift+X` 打开扩展面板
 3. 搜索 `Auto IME`
 4. 点击 **Install** 安装
 
-或使用命令行：
-
 ```bash
 code --install-extension CI124.auto-ime
 ```
 
-### 方式二：手动安装（.vsix 文件）
+### 方式二：手动安装（.vsix）
 
-从 [GitHub Releases](https://github.com/CI124/auto-ime/releases) 下载最新版本的 `.vsix` 文件，然后：
-
-1. 打开 VS Code
-2. 按 `Ctrl+Shift+P` 打开命令面板
-3. 输入 `Extensions: Install from VSIX...`
-4. 选择下载的 `.vsix` 文件
-
-或使用命令行：
+从 [GitHub Releases](https://github.com/CI124/auto-ime/releases) 下载 `.vsix` 文件：
 
 ```bash
-code --install-extension auto-ime-0.5.0-beta.1.vsix
+code --install-extension auto-ime-0.6.0.vsix
 ```
 
 ## 使用方法
 
-1. 安装扩展后，扩展会自动激活并检测运行环境
-2. 底部状态栏会显示当前输入法状态（`EN` 或 `中`）
-3. 点击状态栏可手动切换输入法
+1. 安装后扩展会自动激活
+2. 右下角状态栏显示当前输入法状态（`EN` 或 `中`）
+3. 点击状态栏可手动切换
 
-### Vim 模式（安装了 VSCodeVim 扩展时）
+### Vim 模式
 
-- 在 Insert 模式下：
-  - 光标移动到注释或字符串中 → 自动切换到中文
-  - 光标移动到代码区域 → 自动切换到英文
-- 按 `ESC` 退回 Normal 模式 → 强制切换到英文
-- 支持 `i`、`I`、`s`、`c` 等命令进入 Insert 模式时自动检测
+- Insert 模式下：光标在注释中 → 自动切中文；在代码中 → 自动切英文
+- 按 `ESC` → 强制切英文
+- 支持 `i`、`I`、`s`、`c` 等命令自动检测
 
-### 普通模式（未安装 VSCodeVim 扩展时）
+### 普通模式
 
 - 全局分析，无需进入特定模式
-- 输入 `//`、`#` 等注释语法时自动切换到中文
-- 回车或移动出注释区域时自动切换到英文
+- 输入 `//`、`#` 等注释语法时自动切换
 
 ## 配置
 
-在 VS Code 设置中搜索 `auto-ime`：
-
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| `auto-ime.ibus.englishEngine` | `xkb:us::eng` | IBus 英文引擎名称 |
-| `auto-ime.ibus.chineseEngine` | `libpinyin` | IBus 中文引擎名称 |
-| `auto-ime.windows.pollingInterval` | `150` | Windows 输入法状态轮询间隔（ms，范围 50-1000） |
+| `auto-ime.ibus.englishEngine` | `xkb:us::eng` | IBus 英文引擎 |
+| `auto-ime.ibus.chineseEngine` | `libpinyin` | IBus 中文引擎 |
+| `auto-ime.windows.pollingInterval` | `150` | Windows 轮询间隔（ms） |
 
 ## 支持的输入法框架
 
-| 平台 | 输入法框架 | 说明 |
-|------|-----------|------|
-| Linux | **Fcitx5**（推荐） | 自动读取 `~/.config/fcitx5/profile` 获取输入法列表 |
-| Linux | **Fcitx4** | 通过 `fcitx-remote` 命令切换 |
-| Linux | **IBus** | 通过 `ibus engine` 命令切换 |
-| Windows | **双键盘方案** | 英语键盘(1033) ↔ 微软拼音键盘(2052)，通过 `PostMessageW` 切换，需安装英语(美国)键盘 |
-| Windows | **TSF 管道**（实验性） | 通过 PowerShell COM 互操作读写 TSF compartment，支持单键盘内中英切换（需 TSF COM 可用） |
+| 平台 | 框架 | 说明 |
+|------|------|------|
+| Linux | **Fcitx5**（推荐） | 自动读取 profile |
+| Linux | **Fcitx4** | `fcitx-remote` 命令 |
+| Linux | **IBus** | `ibus engine` 命令 |
+| Windows | **双键盘** | 英语(1033) ↔ 拼音(2052)，需安装英语键盘 |
+| Windows | **TSF 管道**（实验性） | 单键盘内中英切换 |
 
-扩展会自动检测系统平台和输入法框架。
+## 工作原理
+
+1. **事件监听**：模式监听器（Normal/Vim）监听光标和文档变化
+2. **快速路径**：同步文本检测行注释和块注释
+3. **AST 解析**：Tree-sitter 增量解析，判断光标在注释/字符串/代码中
+4. **切换决策**：只在注释中切换中文，字符串不干预
+5. **平台切换**：适配器执行实际切换（Linux: shell 命令，Windows: 键盘布局）
+6. **状态栏更新**：乐观更新显示
 
 ## 开发
 
-### 项目结构
-
-```
-auto-ime/
-├── src/
-│   ├── core/                       # 平台无关的核心逻辑
-│   │   ├── types.ts                # 接口定义（IPlatformAdapter, IModeListener）
-│   │   ├── controller.ts           # 主控制器：分析 → 切换调度
-│   │   └── state-tracker.ts        # IME 状态追踪（轮询、手动/自动切换检测）
-│   ├── modes/                      # 模式特定行为
-│   │   ├── normal.ts               # 普通编辑器模式监听器
-│   │   └── vim.ts                  # Vim 模式监听器（ESC、Insert/Normal 检测）
-│   ├── platforms/                  # 平台实现
-│   │   ├── index.ts                # 平台工厂（自动检测 Linux/Windows）
-│   │   ├── linux/adapter.ts        # Linux 适配器（Fcitx5/4/IBus）
-│   │   └── windows/
-│   │       ├── adapter.ts          # Windows 适配器
-│   │       └── dual-keyboard.ts    # 双键盘策略（Layout 切换）
-│   ├── win32/                      # Windows 底层 FFI
-│   │   ├── ime-ffi.ts              # Win32 API FFI 绑定 (koffi)
-│   │   ├── tsf-ffi.ts              # TSF COM 绑定
-│   │   ├── tsf-pipe.ts             # TSF 持久化 PowerShell 管道
-│   │   └── tsf-helper.cs           # C# TSF 检测辅助
-│   ├── extension.ts                # 扩展入口（薄层）
-│   ├── ASTAnalyzer.ts              # Tree-sitter AST 分析器
-│   └── logger.ts                   # 统一日志模块
-├── test/                           # 测试
-│   ├── mock-koffi-test.js          # Windows Mock 测试（39 个用例）
-│   ├── mock-linux-ime-test.js      # Linux Mock 测试（70 个用例）
-│   └── ast-analyzer-test.js        # AST 分析器测试（59 个用例）
-├── scripts/                        # 辅助脚本
-│   ├── check-env.js                # 环境检测
-│   ├── download-wasm.js            # 下载 WASM 文件
-│   └── prepare-sandbox.js          # 准备测试沙盒
-├── wasm/                           # Tree-sitter WASM 文件
-├── dist/                           # 编译输出目录
-├── esbuild.js                      # 构建脚本
-├── package.json                    # 项目配置
-└── tsconfig.json                   # TypeScript 配置
-```
-
-### 开发流程
-
 ```bash
-# 安装依赖（自动下载 WASM 文件）
-npm install
-
-# 检测本地输入法环境（compile/watch 前自动执行）
-npm run check-env
-
-# 监听模式（自动编译）
-npm run watch
-
-# 按 F5 启动调试（自动准备沙盒环境）
+npm install          # 安装依赖
+npm run watch        # 监听模式
+# 按 F5 启动调试
 ```
-
-### 添加新语言支持
-
-1. 下载对应的 Tree-sitter WASM 文件到 `wasm/` 目录
-2. 在 `src/ASTAnalyzer.ts` 中添加：
-   - `WASM_FILE_MAPPING`：语言 ID → WASM 文件名
-   - `TARGET_NODE_TYPES`：语言 ID → 目标节点类型列表
 
 ### 测试
 
 ```bash
-# 环境检测（检查本地输入法框架是否就绪）
-npm run check-env
-
-# AST 分析器测试（59 个用例，覆盖 TS/Python/C++）
-node test/ast-analyzer-test.js
-
-# Linux IME 管理器 Mock 测试（70 个用例）
-node test/mock-linux-ime-test.js
-
-# Windows IME 管理器 Mock 测试（39 个用例）
-node test/mock-koffi-test.js
+node test/mock-koffi-test.js      # Windows (39 用例)
+node test/mock-linux-ime-test.js  # Linux (70 用例)
+node test/ast-analyzer-test.js    # AST (59 用例)
 ```
-
-扩展也使用 VS Code 沙盒环境进行手动测试：
-
-1. 按 `F5` 启动调试
-2. 在弹出的沙盒窗口中测试功能
-3. 查看 "Auto IME" 输出面板的日志
-
-## 技术栈
-
-- **TypeScript**：主要开发语言
-- **Tree-sitter**：代码解析（通过 WASM）
-- **esbuild**：构建工具
-- **VS Code Extension API**：扩展框架
-
-## 工作原理
-
-1. **事件监听**：模式监听器（Normal/Vim）监听光标移动和文档变化事件
-2. **快速路径**：同步文本启发式检测行注释和块注释，命中时跳过 AST 解析
-3. **AST 解析**：使用 Tree-sitter 增量解析代码，判断光标是否在注释/字符串中
-4. **切换决策**：控制器根据上下文决定是否切换（方案 A：只在注释中切换中文，字符串不干预）
-5. **平台切换**：平台适配器执行实际切换（Linux: Fcitx5/IBus 命令，Windows: 键盘布局切换）
-6. **状态栏更新**：乐观更新状态栏显示（先更新显示，再执行切换）
 
 ## 常见问题
 
-### 扩展不工作
+**扩展不工作**：查看 "Auto IME" 输出面板日志。Windows 需安装英语(美国)键盘。
 
-1. 查看 "Auto IME" 输出面板的日志，确认运行模式（Vim/普通）
-2. Linux：检查系统中是否安装了 Fcitx5/Fcitx4/IBus
-3. Windows：确保安装了"英语(美国)"键盘布局，查看输出面板日志确认切换方法
-4. Vim 用户：检查是否安装了 VSCodeVim 扩展
+**输入法没切换**：Linux 确认 Fcitx5/IBus 正在运行。Windows 查看日志确认切换方法。
 
-### 输入法没有切换
-
-- **Linux**：确认输入法框架正在运行，检查 `PATH` 环境变量，尝试手动执行 `fcitx5-remote -n` 或 `ibus engine` 测试
-- **Windows**：确保系统安装了"英语(美国)"键盘布局（扩展启动时会自动检测并提示）。查看 "Auto IME" 输出面板确认使用的切换方法（imm32/tsf/layout）
-
-### 性能问题
-
-- 扩展使用动态防抖（小文件 10ms / 中文件 30ms / 大文件 60ms），根据文件大小自动调整
-- 注释检测优先走同步快速路径，Tree-sitter AST 分析仅在必要时执行（< 0.01ms/次）
-- Tree-sitter 增量解析：相同文件连续解析仅重新解析变更部分，速度提升约 3 倍
-- 如果仍有延迟，检查系统输入法框架是否正常
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-1. Fork 本仓库
-2. 创建功能分支：`git checkout -b feature/your-feature`
-3. 提交更改：`git commit -m 'Add your feature'`
-4. 推送分支：`git push origin feature/your-feature`
-5. 提交 Pull Request
+**性能问题**：动态防抖（10-60ms）+ 增量解析（3x 提速）+ 快速路径检测。
 
 ## 许可证
 
 MIT License
 
-## 致谢
+---
 
-- [Tree-sitter](https://tree-sitter.github.io/)：代码解析库
-- [VSCodeVim](https://github.com/VSCodeVim/Vim)：Vim 模拟器
-- [web-tree-sitter](https://github.com/tree-sitter/tree-sitter/tree/master/lib/binding_web)：Tree-sitter WASM 绑定
+<a id="english"></a>
+
+# Auto IME (English)
+
+An intelligent input method auto-switching extension for **Linux** and **Windows**. Based on Tree-sitter AST parsing, it automatically switches between Chinese and English input methods based on code context. Supports both **VSCodeVim users** and **regular editor users**.
+
+## Features
+
+- **Dual mode support**: Auto-detects VSCodeVim extension, works for both Vim and regular users
+- **Smart context detection**: Auto-switches to Chinese in comments, leaves strings unchanged
+- **Instant response**: Text-based fast comment detection, immediate switch on `//`, `#` etc.
+- **ESC force switch**: Vim ESC forces English input in Normal mode
+- **Status bar**: Bottom-right status bar shows current IME state, click to toggle
+- **Multi-language**: JavaScript, TypeScript, Python, Go, Rust, C, C++, CSS, HTML, Lua, Java, Kotlin, Bash
+- **High performance**: Tree-sitter WASM incremental parsing + synchronous fast detection + dynamic debounce
+- **Modular architecture**: Platform-agnostic core + platform-specific adapters
+
+## Supported Languages
+
+| Language | Line Comment | Block Comment | String | Template String |
+|----------|-------------|---------------|--------|-----------------|
+| JavaScript | `//` | `/* */` | `" '` | `` ` `` |
+| TypeScript | `//` | `/* */` | `" '` | `` ` `` |
+| Python | `#` | `""" '''` | `" '` | - |
+| Go | `//` | `/* */` | `"` | `` ` `` |
+| Rust | `//` `///` | `/* */` | `"` | `r#"..."#` |
+| C/C++ | `//` | `/* */` | `"` | - |
+| HTML | `<!-- -->` | - | - | - |
+| Lua | `--` | `--[[ ]]` | `" '` | - |
+| Java/Kotlin | `//` | `/* */` | `"` | - |
+| Bash | `#` | - | `" '` | - |
+
+## Installation
+
+### VS Code Marketplace
+
+```bash
+code --install-extension CI124.auto-ime
+```
+
+### Manual (.vsix)
+
+Download from [GitHub Releases](https://github.com/CI124/auto-ime/releases):
+
+```bash
+code --install-extension auto-ime-0.6.0.vsix
+```
+
+## Usage
+
+1. Extension activates automatically after install
+2. Status bar (bottom-right) shows current IME state (`EN` or `中`)
+3. Click status bar to manually toggle
+
+### Vim Mode
+
+- In Insert mode: cursor in comment → Chinese; in code → English
+- Press `ESC` → force English
+- Supports `i`, `I`, `s`, `c` commands auto-detection
+
+### Normal Mode
+
+- Global analysis, no specific mode needed
+- Auto-switches on `//`, `#` comment syntax
+
+## Configuration
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `auto-ime.ibus.englishEngine` | `xkb:us::eng` | IBus English engine |
+| `auto-ime.ibus.chineseEngine` | `libpinyin` | IBus Chinese engine |
+| `auto-ime.windows.pollingInterval` | `150` | Windows polling interval (ms) |
+
+## Supported IME Frameworks
+
+| Platform | Framework | Description |
+|----------|-----------|-------------|
+| Linux | **Fcitx5** (recommended) | Auto-reads profile |
+| Linux | **Fcitx4** | `fcitx-remote` command |
+| Linux | **IBus** | `ibus engine` command |
+| Windows | **Dual keyboard** | English(1033) ↔ Pinyin(2052), requires English keyboard |
+| Windows | **TSF pipe** (experimental) | Single keyboard Chinese/English toggle |
+
+## How It Works
+
+1. **Event listening**: Mode listeners (Normal/Vim) monitor cursor and document changes
+2. **Fast path**: Synchronous text detection for line/block comments
+3. **AST parsing**: Tree-sitter incremental parsing, determines comment/string/code context
+4. **Switch decision**: Only switches to Chinese in comments, strings unchanged
+5. **Platform switch**: Adapter executes actual switch (Linux: shell commands, Windows: keyboard layout)
+6. **Status bar**: Optimistic display update
+
+## Development
+
+```bash
+npm install          # Install dependencies
+npm run watch        # Watch mode
+# Press F5 to debug
+```
+
+### Tests
+
+```bash
+node test/mock-koffi-test.js      # Windows (39 cases)
+node test/mock-linux-ime-test.js  # Linux (70 cases)
+node test/ast-analyzer-test.js    # AST (59 cases)
+```
+
+## FAQ
+
+**Extension not working**: Check "Auto IME" output panel. Windows requires English(US) keyboard.
+
+**IME not switching**: Linux: verify Fcitx5/IBus is running. Windows: check log for switch method.
+
+**Performance**: Dynamic debounce (10-60ms) + incremental parsing (3x faster) + fast path detection.
+
+## License
+
+MIT License
+
+## Acknowledgments
+
+- [Tree-sitter](https://tree-sitter.github.io/) — Code parsing library
+- [VSCodeVim](https://github.com/VSCodeVim/Vim) — Vim emulator
+- [web-tree-sitter](https://github.com/tree-sitter/tree-sitter/tree/master/lib/binding_web) — Tree-sitter WASM bindings

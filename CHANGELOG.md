@@ -1,16 +1,18 @@
-# 更新日志
+# 更新日志 / Changelog
 
-本项目所有重要变更都会记录在此文件。
+本项目所有重要变更都会记录在此文件。 / All notable changes to this project will be documented in this file.
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
 ## [0.6.0] - 2026-06-04
 
-### 概述
+### 概述 / Overview
 
 v0.6.0 是 Windows 平台适配的重大版本。从零开始实现了基于 koffi FFI 的原生 Win32 API 调用，
 替代了之前缓慢的 PowerShell 方案。同时对整个项目进行了模块化重构，解耦了分析、切换、平台适配三层逻辑。
+
+v0.6.0 is a major release for Windows platform adaptation. It implements native Win32 API calls via koffi FFI, replacing the slow PowerShell approach. The project was also modularized, decoupling analysis, switching, and platform adaptation into three layers.
 
 ### Windows 适配
 
