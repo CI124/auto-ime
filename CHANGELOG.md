@@ -13,13 +13,15 @@
 - **P2: 增强 TSF 检测日志**：IMESwitcher 初始化时输出键盘布局十六进制值、TSF COM 对象可用性、TSF pipe 状态；异步切换方法添加 tsf-pipe 尝试/成功/失败的详细日志
 
 ### 优化
+- **TSF pipe 不可用缓存**：首次检测 TSF COM 对象不可用后，后续异步切换直接跳过 TSF pipe 尝试，避免首次 1220ms 超时和后续无意义调用
+- **混合轮询方案**：自动切换完成后设置 600ms suppress 窗口，窗口内跳过轮询 FFI 查询；轮询间隔从 500ms 降至 150ms（手动切换检测更快）
+- **切换感知延迟**：自动切换从 ~400ms 降至 ~0ms（suppress 窗口内不触发轮询）；手动切换检测从 ~500ms 降至 ~150ms
 - `scheduleAnalyze` 使用 generation 计数器，避免 selection + document 事件各触发一次导致 analyzeAndSwitch 执行两次
-- TSF 检测失败时输出具体原因（COM 对象不可用 vs pipe 未初始化）
 - 新增 `getTSFPipeStatus()` 导出方法，用于运行时诊断 TSF 管道状态
 
 ### 验证
 - Windows mock 测试：40/40 通过
-- Bundle 确认包含 generation 计数器、scheme 过滤、TSF pipe 状态检查
+- Bundle 确认包含 TSF 缓存、suppress 窗口、150ms 轮询间隔
 
 ## [0.6.5-beta] - 2026-06-04
 

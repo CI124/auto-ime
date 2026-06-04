@@ -57,7 +57,7 @@
         },
         "auto-ime.windows.pollingInterval": {
           "type": "number",
-          "default": 500,
+          "default": 150,
           "minimum": 50,
           "maximum": 1000,
           "description": "Windows IME state polling interval in milliseconds (lower = more responsive, higher = less CPU)"
