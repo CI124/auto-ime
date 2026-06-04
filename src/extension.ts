@@ -12,6 +12,9 @@ let imeManager: IIMEManager;
 let imeStateManager: IMEStateManager;
 let activeDisposables: vscode.Disposable[] = [];
 
+// 会话级标记：英语键盘缺失提示只显示一次
+let englishKeyboardWarningShown = false;
+
 // 当前输入法状态
 let currentIMEMode: 'en' | 'zh' = 'en';
 // 是否为 Vim 模式（支持延迟检测 Vim 扩展激活）
@@ -88,6 +91,21 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // 初始化 IME 管理器并输出检测日志
     imeManager = createImeManager(outputChannel, logFilePath);
+
+    // Windows: 检查英语键盘是否就绪，未就绪时提示用户
+    if (process.platform === 'win32' && !englishKeyboardWarningShown &&
+        'isReady' in imeManager && !(imeManager as any).isReady()) {
+        englishKeyboardWarningShown = true;
+        log('[WARN] English keyboard layout not found, showing user guidance');
+        vscode.window.showInformationMessage(
+            'Auto IME 需要系统安装英语(美国)键盘布局才能正常工作。请在 Windows 设置 > 时间和语言 > 语言 中添加英语(美国)。',
+            '打开设置'
+        ).then(selection => {
+            if (selection === '打开设置') {
+                vscode.env.openExternal(vscode.Uri.parse('ms-settings:regionlanguage'));
+            }
+        });
+    }
 
     // 初始化 IME 状态管理器（监听用户手动切换）
     imeStateManager = new IMEStateManager({

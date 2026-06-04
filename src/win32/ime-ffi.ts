@@ -186,24 +186,35 @@ export function switchKeyboardLayout(langId: number): void {
 // ============ IMM32 输入法模式查询/切换 ============
 
 /**
- * 查询当前输入法的中文/英文模式（通过 IMM32 ImmGetConversionStatus）
- * 返回 'zh' | 'en'，IMM32 不可用时返回 null（由调用方决定回退策略）
+ * 查询当前输入法的中文/英文模式
+ * 优先使用 IMM32 ImmGetConversionStatus，失败时回退到 Language ID 判断
+ * 返回 'zh' | 'en'，仅当两种方法都失败时返回 null
  */
 export function queryIMEMode(): 'zh' | 'en' | null {
     const hwnd = getTrueForegroundWindow();
     if (!hwnd) return null;
 
+    // 第一优先：IMM32（适用于传统 IME，如微软拼音旧版）
     const hImmCtx = ImmGetContext(hwnd);
-    if (!hImmCtx) return null;
+    if (hImmCtx) {
+        const convBuf = [0];
+        const sentBuf = [0];
+        const ok = ImmGetConversionStatus(hImmCtx, convBuf, sentBuf);
+        ImmReleaseContext(hwnd, hImmCtx);
 
-    const convBuf = [0];
-    const sentBuf = [0];
-    const ok = ImmGetConversionStatus(hImmCtx, convBuf, sentBuf);
-    ImmReleaseContext(hwnd, hImmCtx);
+        if (ok) {
+            return (Number(convBuf[0]) & IME_CMODE_NATIVE) !== 0 ? 'zh' : 'en';
+        }
+    }
 
-    if (!ok) return null;
+    // 第二优先：Language ID（适用于 TSF IME 如微软拼音，ImmGetContext 返回 null）
+    const langId = getCurrentLanguageId();
+    if (langId !== 0) {
+        if (isChineseLangId(langId)) return 'zh';
+        if (isEnglishLangId(langId)) return 'en';
+    }
 
-    return (Number(convBuf[0]) & IME_CMODE_NATIVE) !== 0 ? 'zh' : 'en';
+    return null;
 }
 
 /**
@@ -230,6 +241,42 @@ export function setTSFMode(chinese: boolean): boolean {
     } catch {
         return false;
     }
+}
+
+/**
+ * 通过持久化 PowerShell 管道查询 TSF 模式（异步，~2-5ms）
+ * 返回 'zh' | 'en' | null
+ */
+export async function queryTSFModeAsync(): Promise<'zh' | 'en' | null> {
+    try {
+        const tsfFfi = require('./tsf-ffi');
+        return await tsfFfi.queryTSFModeAsync();
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * 通过持久化 PowerShell 管道设置 TSF 模式（异步，~2-5ms）
+ * 返回是否成功
+ */
+export async function setTSFModeAsync(chinese: boolean): Promise<boolean> {
+    try {
+        const tsfFfi = require('./tsf-ffi');
+        return await tsfFfi.setTSFModeAsync(chinese);
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * 释放持久化 PowerShell 管道
+ */
+export function disposeTSFPipe(): void {
+    try {
+        const tsfFfi = require('./tsf-ffi');
+        tsfFfi.disposeTSFPipe();
+    } catch {}
 }
 
 /**

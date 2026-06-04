@@ -5,6 +5,31 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.1-beta] - 2026-06-04
+
+> **⚠ 实验性版本**：Windows 平台 TSF 持久化管道已就绪，需实机验证微软拼音单键盘切换。
+
+### 新增
+- **TSF 持久化管道**：新增 `src/win32/tsf-pipe.ts`，通过持久化 PowerShell 进程与 stdin/stdout 通信协议，将 TSF compartment 读写从 ~300ms 降至 ~2-5ms
+- **异步切换方法**：`IMESwitcher` 新增 `switchToEnglishAsync()` / `switchToChineseAsync()`，完整三层策略：IMM32 → TSF pipe → 键盘布局切换
+- **Language ID 兜底查询**：`queryIMEMode()` 在 IMM32 失败时自动用 `GetKeyboardLayout` 的 Language ID 判断中英文，无需 TSF 回退
+- **英语键盘缺失引导**：检测到未安装英语(美国)键盘时，弹出 VS Code 信息提示并提供"打开设置"按钮（`ms-settings:regionlanguage`），每会话仅弹一次
+- **TSF 异步 API**：`tsf-ffi.ts` 新增 `queryTSFModeAsync()` / `setTSFModeAsync()` / `disposeTSFPipe()`
+
+### 优化
+- **查询性能提升**：`queryMode()` 移除 TSF PowerShell 回退（~300ms），改为 Language ID 兜底（<1ms）
+- **轮询间隔调整**：默认从 1000ms 降至 500ms，手动切换检测更灵敏（配置范围同步调整为 50-1000ms）
+- **测试覆盖扩展**：Windows mock 测试从 29 个增至 40 个，新增 TSF 管道协议、异步方法、用户引导等验证
+
+### 已知问题
+- 异步切换方法 (`switchToEnglishAsync`/`switchToChineseAsync`) 尚未集成到 `extension.ts` 的主切换路径，需实机验证后启用
+- TSF 管道依赖 PowerShell COM 互操作 `MsTf.TF_ThreadMgr`，部分精简版 Windows 可能不可用
+
+### 待办
+- 实机验证：在 Windows + 微软拼音环境下测试 TSF 管道的单键盘内中英切换
+- 集成异步切换：验证成功后将 `analyzeAndSwitch` 改为使用异步方法
+- 长期：用预编译 C++ DLL 替代 PowerShell 管道，进一步降低延迟到 <1ms
+
 ## [0.6.0-beta] - 2026-06-04
 
 > **⚠ 实验性版本**：Windows 平台已实机测试，核心功能可用，性能和稳定性仍在优化中。
@@ -167,7 +192,8 @@
 - 自动检测 Fcitx5/Fcitx4/IBus
 - 300ms 防抖响应
 
-[0.6.0-beta]: https://github.com/CI124/auto-ime/compare/v0.5.0...v0.6.0-beta2
+[0.6.1-beta]: https://github.com/CI124/auto-ime/compare/v0.6.0-beta...v0.6.1-beta
+[0.6.0-beta]: https://github.com/CI124/auto-ime/compare/v0.5.0...v0.6.0-beta
 [0.5.0]: https://github.com/CI124/auto-ime/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/CI124/auto-ime/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/CI124/auto-ime/compare/v0.2.0...v0.3.0

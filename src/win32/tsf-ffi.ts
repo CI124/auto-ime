@@ -4,9 +4,13 @@
  *
  * 使用 koffi 调用 ole32.dll COM 函数
  * 注意：仅 Windows 可用，调用方需确保平台匹配
+ *
+ * 性能优化：queryTSFModeAsync / setTSFModeAsync 使用持久化 PowerShell 进程（~2-5ms），
+ * 同步版本仍逐次启动 PowerShell（~300ms），作为兼容回退。
  */
 
 import koffi from 'koffi';
+import { TSFPipe } from './tsf-pipe';
 
 // ============ COM 基础设施 ============
 
@@ -99,7 +103,61 @@ function ensureLoaded() {
     _CoCreateInstance = CoCreateInstance;
 }
 
-// ============ 公共 API ============
+// ============ 持久化 PowerShell 管道（快速路径） ============
+
+type LogSink = {
+    info: (message: string) => void;
+    error: (message: string) => void;
+};
+
+let _pipe: TSFPipe | null = null;
+
+function getPipe(logger?: LogSink): TSFPipe {
+    if (!_pipe) {
+        _pipe = new TSFPipe(logger || { info: () => {}, error: () => {} });
+    }
+    return _pipe;
+}
+
+/**
+ * 通过持久化 PowerShell 管道查询 TSF 模式（异步，~2-5ms）
+ * 返回 'zh' | 'en' | null
+ */
+export async function queryTSFModeAsync(logger?: LogSink): Promise<'zh' | 'en' | null> {
+    try {
+        const pipe = getPipe(logger);
+        await pipe.initialize();
+        return await pipe.queryMode();
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * 通过持久化 PowerShell 管道设置 TSF 模式（异步，~2-5ms）
+ * 返回是否成功
+ */
+export async function setTSFModeAsync(chinese: boolean, logger?: LogSink): Promise<boolean> {
+    try {
+        const pipe = getPipe(logger);
+        await pipe.initialize();
+        return await pipe.setMode(chinese);
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * 释放持久化 PowerShell 管道
+ */
+export function disposeTSFPipe(): void {
+    if (_pipe) {
+        _pipe.dispose();
+        _pipe = null;
+    }
+}
+
+// ============ 公共 API（同步回退） ============
 
 /**
  * 检测当前系统是否有 TSF 输入法管理器

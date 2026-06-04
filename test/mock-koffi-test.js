@@ -161,7 +161,7 @@ Module._load = function(request, parent, isMain) {
             workspace: {
                 getConfiguration: (section) => ({
                     get: (key, def) => {
-                        if (section === 'auto-ime.windows' && key === 'pollingInterval') return 100;
+                        if (section === 'auto-ime.windows' && key === 'pollingInterval') return 500;
                         if (section === 'auto-ime.ibus' && key === 'englishEngine') return 'xkb:us::eng';
                         if (section === 'auto-ime.ibus' && key === 'chineseEngine') return 'libpinyin';
                         return def;
@@ -184,7 +184,7 @@ Module._load = function(request, parent, isMain) {
             workspace: {
                 getConfiguration: (section) => ({
                     get: (key, def) => {
-                        if (section === 'auto-ime.windows' && key === 'pollingInterval') return 100;
+                        if (section === 'auto-ime.windows' && key === 'pollingInterval') return 500;
                         return def;
                     },
                 }),
@@ -441,12 +441,99 @@ test('queryIMEMode 返回 null 而非 "en" (IMM32 失败时)', () => {
     assert.ok(bundleSrc.includes('return null'), '应包含 return null');
 });
 
-test('queryMode 三层策略: IMM32 → TSF → Language ID', () => {
-    assert.ok(bundleSrc.includes('const tsfMode = queryTSFMode'), '应包含 TSF 回退');
+test('queryMode 不再调用 TSF (已移至 queryIMEMode 内部)', () => {
+    // queryMode 函数体内不应有 queryTSFMode 调用
+    const queryModeSection = bundleSrc.substring(
+        bundleSrc.indexOf('queryIMEMode() 已内置'),
+        bundleSrc.indexOf('switchToEnglish', bundleSrc.indexOf('queryIMEMode() 已内置'))
+    );
+    assert.ok(!queryModeSection.includes('queryTSFMode'), 'queryMode 不应调用 queryTSFMode');
+});
+
+test('queryIMEMode 包含 Language ID 降级逻辑', () => {
+    // queryIMEMode 函数体内应包含 getCurrentLanguageId 和 isChineseLangId
+    const queryIMEModeSection = bundleSrc.substring(
+        bundleSrc.indexOf('function queryIMEMode()'),
+        bundleSrc.indexOf('function queryTSFMode2()')
+    );
+    assert.ok(queryIMEModeSection.includes('getCurrentLanguageId'), 'queryIMEMode 应包含 getCurrentLanguageId 调用');
+    assert.ok(queryIMEModeSection.includes('isChineseLangId'), 'queryIMEMode 应包含 isChineseLangId 调用');
+    assert.ok(queryIMEModeSection.includes('isEnglishLangId'), 'queryIMEMode 应包含 isEnglishLangId 调用');
+});
+
+test('switchToEnglish/switchToChinese 不调用 queryTSFMode', () => {
+    // IMESwitcher 类中的 switch 方法不应调用 queryTSFMode
+    // 使用 IMESwitcher 类的 switch 方法区域（从 switchToEnglish 到 switchToChinese 结束）
+    const switchStart = bundleSrc.indexOf('switchToEnglish() {\n        if (!this.enLangId)');
+    const switchEnd = bundleSrc.indexOf('return { success: true, method: "layout" };\n      }\n    };\n  }\n})', switchStart);
+    const switchSection = bundleSrc.substring(switchStart, switchEnd);
+    assert.ok(!switchSection.includes('queryTSFMode'), '切换路径不应调用 queryTSFMode');
+    // 确认使用的是 queryIMEMode 而非 queryTSFMode
+    assert.ok(switchSection.includes('queryIMEMode'), '切换路径应使用 queryIMEMode');
+});
+
+test('bundle 包含英语键盘缺失的用户引导', () => {
+    assert.ok(bundleSrc.includes('englishKeyboardWarningShown'), '应包含会话级标记');
+    assert.ok(bundleSrc.includes('ms-settings:regionlanguage'), '应包含 Windows 设置链接');
+    // 中文文本在 bundle 中被 Unicode 转义，检查转义形式
+    assert.ok(bundleSrc.includes('\\u6253\\u5F00\\u8BBE\\u7F6E'), '应包含"打开设置"按钮文本');
 });
 
 test('switchToEnglish 不缓存降级状态', () => {
     assert.ok(!bundleSrc.includes('preferredMethod'), '不应包含 preferredMethod 缓存');
+});
+
+// ---- 测试 8: TSF 持久化管道 ----
+console.log('\n📦 测试 8: TSF 持久化管道 (tsf-pipe.ts)');
+
+test('tsf-pipe.ts 源文件存在', () => {
+    const tsfPipePath = require('path').join(__dirname, '..', 'src', 'win32', 'tsf-pipe.ts');
+    assert.ok(fs.existsSync(tsfPipePath), 'tsf-pipe.ts 应存在于 src/win32/');
+});
+
+test('bundle 包含 TSFPipe 类', () => {
+    assert.ok(bundleSrc.includes('TSFPipe'), 'bundle 应包含 TSFPipe 类引用');
+});
+
+test('bundle 包含持久化管道命令协议', () => {
+    assert.ok(bundleSrc.includes('INIT:OK'), '应包含 INIT:OK 协议');
+    assert.ok(bundleSrc.includes('QUERY'), '应包含 QUERY 命令');
+    assert.ok(bundleSrc.includes('SET:'), '应包含 SET 命令');
+    assert.ok(bundleSrc.includes('EXIT'), '应包含 EXIT 命令');
+});
+
+test('bundle 包含管道超时逻辑', () => {
+    assert.ok(bundleSrc.includes('Command timeout'), '应包含命令超时处理');
+});
+
+test('bundle 包含 queryTSFModeAsync 异步方法', () => {
+    assert.ok(bundleSrc.includes('queryTSFModeAsync'), '应包含异步查询方法');
+});
+
+test('bundle 包含 setTSFModeAsync 异步方法', () => {
+    assert.ok(bundleSrc.includes('setTSFModeAsync'), '应包含异步设置方法');
+});
+
+test('bundle 包含 disposeTSFPipe 清理方法', () => {
+    assert.ok(bundleSrc.includes('disposeTSFPipe'), '应包含管道清理方法');
+});
+
+test('bundle 包含 switchToEnglishAsync 异步切换方法', () => {
+    assert.ok(bundleSrc.includes('switchToEnglishAsync'), '应包含异步英文切换');
+});
+
+test('bundle 包含 switchToChineseAsync 异步切换方法', () => {
+    assert.ok(bundleSrc.includes('switchToChineseAsync'), '应包含异步中文切换');
+});
+
+test('TSF 管道使用 stdin/stdout 通信', () => {
+    assert.ok(bundleSrc.includes('[Console]::In.ReadLine'), '应通过 stdin 读取命令');
+    assert.ok(bundleSrc.includes('Write-Output'), '应通过 stdout 输出结果');
+});
+
+test('TSF 管道使用 MsTf.TF_ThreadMgr COM 对象', () => {
+    assert.ok(bundleSrc.includes('MsTf.TF_ThreadMgr'), '应使用 TSF COM 对象');
+    assert.ok(bundleSrc.includes('58273AAD-01BB-4164-95C6-755BA0B5162D'), '应使用正确的 compartment GUID');
 });
 
 // ---- 汇总 ----

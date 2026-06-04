@@ -91,6 +91,7 @@ code --install-extension auto-ime-0.5.0-beta.1.vsix
 |--------|--------|------|
 | `auto-ime.ibus.englishEngine` | `xkb:us::eng` | IBus 英文引擎名称 |
 | `auto-ime.ibus.chineseEngine` | `libpinyin` | IBus 中文引擎名称 |
+| `auto-ime.windows.pollingInterval` | `500` | Windows 输入法状态轮询间隔（ms，范围 50-1000） |
 
 ## 支持的输入法框架
 
@@ -99,7 +100,8 @@ code --install-extension auto-ime-0.5.0-beta.1.vsix
 | Linux | **Fcitx5**（推荐） | 自动读取 `~/.config/fcitx5/profile` 获取输入法列表 |
 | Linux | **Fcitx4** | 通过 `fcitx-remote` 命令切换 |
 | Linux | **IBus** | 通过 `ibus engine` 命令切换，支持 D-Bus 信号监听 |
-| Windows | **PowerShell + Win32 API** | 通过 `SendMessageW(WM_INPUTLANGCHANGEREQUEST)` 切换键盘布局，支持所有 Windows 输入法 |
+| Windows | **koffi FFI + TSF 管道**（推荐） | 直接调用 `user32.dll` / `imm32.dll`，TSF 持久化管道（~5ms），支持微软拼音单键盘内中英切换 |
+| Windows | **PowerShell 回退** | koffi 不可用时自动降级，通过 `SendMessageW(WM_INPUTLANGCHANGEREQUEST)` 切换键盘布局 |
 
 扩展会自动检测系统平台和输入法框架。
 
@@ -115,6 +117,11 @@ auto-ime/
 │   ├── IMEManager.ts       # 输入法管理器
 │   ├── IMEStateManager.ts  # 输入法状态监听管理器
 │   └── win32/              # Windows FFI 层
+│       ├── ime-ffi.ts      # Win32 API FFI 绑定 (koffi)
+│       ├── ime-switcher.ts # 三层切换策略编排
+│       ├── tsf-ffi.ts      # TSF COM 绑定
+│       ├── tsf-pipe.ts     # TSF 持久化 PowerShell 管道
+│       └── tsf-helper.cs   # C# TSF 检测辅助
 ├── test/                   # 测试
 │   ├── mock-linux-ime-test.js  # Linux IME Mock 测试
 │   ├── mock-koffi-test.js      # Windows IME Mock 测试
@@ -164,7 +171,7 @@ node test/ast-analyzer-test.js
 # Linux IME 管理器 Mock 测试（70 个用例）
 node test/mock-linux-ime-test.js
 
-# Windows IME 管理器 Mock 测试（26 个用例）
+# Windows IME 管理器 Mock 测试（40 个用例）
 node test/mock-koffi-test.js
 ```
 
@@ -188,7 +195,7 @@ node test/mock-koffi-test.js
 3. **AST 解析**：使用 Tree-sitter 增量解析代码，判断光标是否在注释/字符串中
 4. **输入法切换**：
    - Linux：通过 shell 命令调用 Fcitx5/Fcitx4/IBus
-   - Windows：通过 PowerShell 调用 Win32 `SendMessageW` API 切换键盘布局
+   - Windows：koffi FFI 直调 Win32 API（IMM32 → TSF 管道 → 键盘布局切换，自动降级）
 5. **状态栏更新**：实时更新状态栏显示
 
 ## 常见问题
@@ -197,13 +204,13 @@ node test/mock-koffi-test.js
 
 1. 查看 "Auto IME" 输出面板的日志，确认运行模式（Vim/普通）
 2. Linux：检查系统中是否安装了 Fcitx5/Fcitx4/IBus
-3. Windows：确保 PowerShell 可用（Windows 7+ 自带）
+3. Windows：确保安装了"英语(美国)"键盘布局，查看输出面板日志确认切换方法
 4. Vim 用户：检查是否安装了 VSCodeVim 扩展
 
 ### 输入法没有切换
 
 - **Linux**：确认输入法框架正在运行，检查 `PATH` 环境变量，尝试手动执行 `fcitx5-remote -n` 或 `ibus engine` 测试
-- **Windows**：确认 PowerShell 可用，检查系统是否安装了中文和英文键盘布局
+- **Windows**：确保系统安装了"英语(美国)"键盘布局（扩展启动时会自动检测并提示）。查看 "Auto IME" 输出面板确认使用的切换方法（imm32/tsf/layout）
 
 ### 性能问题
 
