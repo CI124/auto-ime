@@ -461,15 +461,14 @@ test('queryIMEMode 包含 Language ID 降级逻辑', () => {
     assert.ok(queryIMEModeSection.includes('isEnglishLangId'), 'queryIMEMode 应包含 isEnglishLangId 调用');
 });
 
-test('switchToEnglish/switchToChinese 不调用 queryTSFMode', () => {
-    // IMESwitcher 类中的 switch 方法不应调用 queryTSFMode
-    // 使用 IMESwitcher 类的 switch 方法区域（从 switchToEnglish 到 switchToChinese 结束）
-    const switchStart = bundleSrc.indexOf('switchToEnglish() {\n        if (!this.enLangId)');
-    const switchEnd = bundleSrc.indexOf('return { success: true, method: "layout" };\n      }\n    };\n  }\n})', switchStart);
-    const switchSection = bundleSrc.substring(switchStart, switchEnd);
+test('switchToEnglish/switchToChinese uses getCurrentLanguageId (same mechanism as detection)', () => {
+    // 双键盘方案：检测和切换应使用同一机制（Language ID）
+    // switchToEnglish/Chinese 应使用 getCurrentLanguageId 检查当前布局
+    const switchStart = bundleSrc.indexOf('switchToEnglish() {');
+    const switchSection = bundleSrc.substring(switchStart, switchStart + 2000);
     assert.ok(!switchSection.includes('queryTSFMode'), '切换路径不应调用 queryTSFMode');
-    // 确认使用的是 queryIMEMode 而非 queryTSFMode
-    assert.ok(switchSection.includes('queryIMEMode'), '切换路径应使用 queryIMEMode');
+    assert.ok(!switchSection.includes('setIMEMode'), '双键盘方案不应调用 setIMEMode');
+    assert.ok(switchSection.includes('getCurrentLanguageId'), '切换路径应使用 getCurrentLanguageId 检查当前布局');
 });
 
 test('bundle 包含英语键盘缺失的用户引导', () => {
