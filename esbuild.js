@@ -30,7 +30,7 @@ async function build() {
         entryPoints: ['src/extension.ts'],
         bundle: true,
         outfile: 'dist/extension.js',
-        external: ['vscode', 'x11', 'koffi'],
+        external: ['vscode', 'x11', 'koffi', 'debug'],
         format: 'cjs',
         platform: 'node',
         target: 'node16',

@@ -180,17 +180,20 @@ export async function activate(context: vscode.ExtensionContext) {
         return editor.options.cursorStyle === vscode.TextEditorCursorStyle.Line;
     }
 
-    // 统一分析调度（10ms 防抖）
+    // 统一分析调度（动态防抖: 根据文件大小调整延迟）
     function scheduleAnalyze() {
         if (analyzeDebounceTimer) {
             clearTimeout(analyzeDebounceTimer);
         }
+        const editor = vscode.window.activeTextEditor;
+        const lineCount = editor?.document.lineCount ?? 0;
+        // 小文件 (<500行): 10ms | 中文件 (500-5000行): 30ms | 大文件 (>5000行): 60ms
+        const delay = lineCount > 5000 ? 60 : lineCount > 500 ? 30 : 10;
         analyzeDebounceTimer = setTimeout(() => {
-            const editor = vscode.window.activeTextEditor;
             if (!editor) return;
             if (isVimMode && !isInInsertMode(editor)) return;
             analyzeAndSwitch(editor);
-        }, 10);
+        }, delay);
     }
 
     // ==========================================
@@ -413,5 +416,8 @@ export function deactivate() {
     activeDisposables = [];
     if (imeStateManager) {
         imeStateManager.stopListening();
+    }
+    if (astAnalyzer) {
+        astAnalyzer.dispose();
     }
 }

@@ -19,6 +19,11 @@ export class ASTAnalyzer {
     private extensionContext: vscode.ExtensionContext;
     private outputChannel: vscode.OutputChannel;
 
+    // 增量解析: 缓存上一次的 Tree，供 parser.parse(text, oldTree) 使用
+    private lastTree: Parser.Tree | null = null;
+    // 取消机制: 每次分析递增，过期的解析结果会被丢弃
+    private analysisGeneration = 0;
+
     // WASM 文件映射字典：languageId -> wasm 文件名
     private readonly WASM_FILE_MAPPING: Record<string, string> = {
         'typescript': 'tree-sitter-typescript.wasm',
@@ -44,7 +49,7 @@ export class ASTAnalyzer {
         'javascriptreact': `(comment) @comment\n(string) @comment\n(template_string) @comment`,
         'typescript': `(comment) @comment\n(string) @comment\n(template_string) @comment`,
         'typescriptreact': `(comment) @comment\n(string) @comment\n(template_string) @comment`,
-        'python': `(comment) @comment\n(module . (expression_statement [(string) @comment (concatenated_string) @comment] (#match? @comment "^(\"\"\"|''')")))\n(function_definition body: (block . (expression_statement [(string) @comment (concatenated_string) @comment] (#match? @comment "^(\"\"\"|''')"))))\n(class_definition body: (block . (expression_statement [(string) @comment (concatenated_string) @comment] (#match? @comment "^(\"\"\"|''')"))))`,
+        'python': `(comment) @comment\n(string) @comment`,
         'go': `(comment) @comment\n(interpreted_string_literal) @comment\n(raw_string_literal) @comment`,
         'rust': `(line_comment) @comment\n(block_comment) @comment\n(string_literal) @comment\n(raw_string_literal) @comment`,
         'c': `(comment) @comment\n(string_literal) @comment`,
@@ -234,13 +239,31 @@ export class ASTAnalyzer {
         const query = this.getQuery(languageId, lang);
         if (!query) return { match: false, type: null };
 
+        // 取消机制: 记录本次分析的 generation，后续若有更新的分析则丢弃结果
+        const myGeneration = ++this.analysisGeneration;
+
         this.parser.setLanguage(lang);
         const text = document.getText();
 
         let tree: Parser.Tree;
         try {
-            tree = this.parser.parse(text);
+            // 增量解析: 利用上一次的 Tree 仅重新解析变更部分
+            tree = this.parser.parse(text, this.lastTree ?? undefined);
         } catch (error) {
+            // 增量解析失败时降级为全量解析
+            try {
+                tree = this.parser.parse(text);
+            } catch {
+                return { match: false, type: null };
+            }
+        }
+
+        // 释放旧树，缓存新树
+        this.lastTree?.delete();
+        this.lastTree = tree;
+
+        // 若已有更新的分析请求，丢弃本次结果
+        if (myGeneration !== this.analysisGeneration) {
             return { match: false, type: null };
         }
 
@@ -284,5 +307,19 @@ export class ASTAnalyzer {
         }
 
         return { match: false, type: null };
+    }
+
+    /**
+     * 释放所有资源。扩展停用时调用。
+     */
+    public dispose(): void {
+        this.lastTree?.delete();
+        this.lastTree = null;
+        this.queryCache.forEach(q => q?.delete());
+        this.queryCache.clear();
+        this.languageMap.clear();
+        this.parser?.delete();
+        this.parser = null;
+        this.initialized = false;
     }
 }
