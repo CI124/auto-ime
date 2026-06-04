@@ -5,6 +5,18 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.5-beta] - 2026-06-04
+
+### 修复
+- **修复切换重复触发**：`analyzeAndSwitch` 改为乐观更新（先 `updateStatusBar` 再 `await switchAsync`），避免异步切换期间 `currentIMEMode` 未更新导致重复触发（~70 次重复 → 1 次）
+- **移除 `setIMEMode` ImmGetContext 失败日志**：TSF IME 下已知会失败，由调用方处理降级，不再每次输出 DEBUG 日志
+- **`No WASM mapping` 日志去重**：每个未映射的 languageId 只输出一次，不再每次 document change 都重复
+
+### 预期效果
+- `switch to ZH` 从 ~70 次重复降为 1 次
+- `setIMEMode: ImmGetContext failed` 从每次切换都输出降为 0 次
+- `No WASM mapping for code-runner-output` 从 ~200 次降为 1 次
+
 ## [0.6.4-beta] - 2026-06-04
 
 ### 新增
@@ -232,6 +244,7 @@
 - 自动检测 Fcitx5/Fcitx4/IBus
 - 300ms 防抖响应
 
+[0.6.5-beta]: https://github.com/CI124/auto-ime/compare/v0.6.4-beta...v0.6.5-beta
 [0.6.4-beta]: https://github.com/CI124/auto-ime/compare/v0.6.3-beta...v0.6.4-beta
 [0.6.3-beta]: https://github.com/CI124/auto-ime/compare/v0.6.2-beta...v0.6.3-beta
 [0.6.2-beta]: https://github.com/CI124/auto-ime/compare/v0.6.1-beta...v0.6.2-beta

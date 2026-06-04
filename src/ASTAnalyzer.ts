@@ -67,6 +67,9 @@ export class ASTAnalyzer {
     // 编译后的 Query 对象缓存
     private queryCache = new Map<string, Parser.Query | null>();
 
+    // 已记录的未映射语言 ID（避免重复日志）
+    private unmappedLanguagesLogged = new Set<string>();
+
     constructor(context: vscode.ExtensionContext, outputChannel: vscode.OutputChannel, logger: LogSink) {
         this.extensionContext = context;
         this.outputChannel = outputChannel;
@@ -109,7 +112,10 @@ export class ASTAnalyzer {
 
         const wasmFile = this.WASM_FILE_MAPPING[languageId];
         if (!wasmFile) {
-            this.logger.info(`[AST] No WASM mapping for languageId=${languageId}`);
+            if (!this.unmappedLanguagesLogged.has(languageId)) {
+                this.unmappedLanguagesLogged.add(languageId);
+                this.logger.info(`[AST] No WASM mapping for languageId=${languageId}`);
+            }
             return null;
         }
 

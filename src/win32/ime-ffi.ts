@@ -298,7 +298,7 @@ export function setIMEMode(chinese: boolean, logger?: LogSink): boolean {
 
     const hImmCtx = ImmGetContext(hwnd);
     if (!hImmCtx) {
-        logger?.debug('[FFI] setIMEMode: ImmGetContext failed');
+        // Expected for TSF IMEs (Microsoft Pinyin) — caller handles fallback
         return false;
     }
 

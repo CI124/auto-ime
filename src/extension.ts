@@ -163,13 +163,13 @@ export async function activate(context: vscode.ExtensionContext) {
         if (fastResult === true) {
             if (currentIMEMode !== 'zh') {
                 logger.info(`[${cursor}] ${lang} vim=${vimMode} → comment (fast) → switch to ZH`);
+                updateStatusBar('zh'); // Optimistic update to prevent re-trigger
                 imeStateManager.markAutoSwitch();
                 if (imeManager.switchToChineseAsync) {
                     await imeManager.switchToChineseAsync();
                 } else {
                     imeManager.switchToChinese();
                 }
-                updateStatusBar('zh');
             }
             return;
         }
@@ -180,24 +180,24 @@ export async function activate(context: vscode.ExtensionContext) {
         if (astResult.match) {
             if (currentIMEMode !== 'zh') {
                 logger.info(`[${cursor}] ${lang} vim=${vimMode} → ${astResult.type} → switch to ZH`);
+                updateStatusBar('zh'); // Optimistic update
                 imeStateManager.markAutoSwitch();
                 if (imeManager.switchToChineseAsync) {
                     await imeManager.switchToChineseAsync();
                 } else {
                     imeManager.switchToChinese();
                 }
-                updateStatusBar('zh');
             }
         } else {
             if (currentIMEMode !== 'en') {
                 logger.info(`[${cursor}] ${lang} vim=${vimMode} → code → switch to EN`);
+                updateStatusBar('en'); // Optimistic update
                 imeStateManager.markAutoSwitch();
                 if (imeManager.switchToEnglishAsync) {
                     await imeManager.switchToEnglishAsync();
                 } else {
                     imeManager.switchToEnglish();
                 }
-                updateStatusBar('en');
             }
         }
     }
