@@ -21,6 +21,14 @@ Thumbs.db
 *~
 .codegraph/
 
-
 # Graphify output
 graphify-out/
+
+# Claude Code config
+.claude/
+
+# VS Code personal settings (workspace-specific, not for extension)
+.vscode/settings.json
+
+# Internal design docs (already implemented)
+docs/architecture-proposal.md
