@@ -8,12 +8,13 @@
 ## 功能特性
 
 - **双模式支持**：自动检测 VSCodeVim 扩展，Vim 用户和普通用户均可使用
-- **智能上下文检测**：光标在注释或字符串中时自动切换到中文输入法
+- **智能上下文检测**：光标在注释中时自动切换到中文输入法，字符串中不干预
 - **即时响应**：基于文本的快速注释检测，输入 `//`、`#` 等注释语法时立即切换
 - **ESC 强制切换**：Vim 模式下按 ESC 退回 Normal 模式时强制切换到英文输入法
-- **状态栏显示**：底部状态栏实时显示当前输入法状态，支持点击切换
+- **状态栏显示**：右下角状态栏实时显示当前输入法状态，支持点击切换
 - **多语言支持**：JavaScript、TypeScript、Python、Go、Rust、C、C++、CSS、HTML、Lua、Java、Kotlin、Bash
 - **高性能**：Tree-sitter WASM 增量解析 + 同步文本快速检测 + 动态防抖响应
+- **模块化架构**：平台无关的核心逻辑 + 平台特定的适配器，易于扩展
 
 ## 支持的语言和注释类型
 
@@ -91,7 +92,7 @@ code --install-extension auto-ime-0.5.0-beta.1.vsix
 |--------|--------|------|
 | `auto-ime.ibus.englishEngine` | `xkb:us::eng` | IBus 英文引擎名称 |
 | `auto-ime.ibus.chineseEngine` | `libpinyin` | IBus 中文引擎名称 |
-| `auto-ime.windows.pollingInterval` | `500` | Windows 输入法状态轮询间隔（ms，范围 50-1000） |
+| `auto-ime.windows.pollingInterval` | `150` | Windows 输入法状态轮询间隔（ms，范围 50-1000） |
 
 ## 支持的输入法框架
 
@@ -99,9 +100,9 @@ code --install-extension auto-ime-0.5.0-beta.1.vsix
 |------|-----------|------|
 | Linux | **Fcitx5**（推荐） | 自动读取 `~/.config/fcitx5/profile` 获取输入法列表 |
 | Linux | **Fcitx4** | 通过 `fcitx-remote` 命令切换 |
-| Linux | **IBus** | 通过 `ibus engine` 命令切换，支持 D-Bus 信号监听 |
-| Windows | **koffi FFI + TSF 管道**（推荐） | 直接调用 `user32.dll` / `imm32.dll`，TSF 持久化管道（~5ms），支持微软拼音单键盘内中英切换 |
-| Windows | **PowerShell 回退** | koffi 不可用时自动降级，通过 `SendMessageW(WM_INPUTLANGCHANGEREQUEST)` 切换键盘布局 |
+| Linux | **IBus** | 通过 `ibus engine` 命令切换 |
+| Windows | **双键盘方案** | 英语键盘(1033) ↔ 微软拼音键盘(2052)，通过 `PostMessageW` 切换，需安装英语(美国)键盘 |
+| Windows | **TSF 管道**（实验性） | 通过 PowerShell COM 互操作读写 TSF compartment，支持单键盘内中英切换（需 TSF COM 可用） |
 
 扩展会自动检测系统平台和输入法框架。
 
@@ -111,30 +112,41 @@ code --install-extension auto-ime-0.5.0-beta.1.vsix
 
 ```
 auto-ime/
-├── src/                    # 源代码
-│   ├── extension.ts        # 扩展入口
-│   ├── ASTAnalyzer.ts      # Tree-sitter AST 分析器
-│   ├── IMEManager.ts       # 输入法管理器
-│   ├── IMEStateManager.ts  # 输入法状态监听管理器
-│   └── win32/              # Windows FFI 层
-│       ├── ime-ffi.ts      # Win32 API FFI 绑定 (koffi)
-│       ├── ime-switcher.ts # 三层切换策略编排
-│       ├── tsf-ffi.ts      # TSF COM 绑定
-│       ├── tsf-pipe.ts     # TSF 持久化 PowerShell 管道
-│       └── tsf-helper.cs   # C# TSF 检测辅助
-├── test/                   # 测试
-│   ├── mock-linux-ime-test.js  # Linux IME Mock 测试
-│   ├── mock-koffi-test.js      # Windows IME Mock 测试
-│   └── ast-analyzer-test.js    # AST 分析器测试
-├── scripts/                # 辅助脚本
-│   ├── check-env.js        # 环境检测（输入法/D-Bus 连通性）
-│   ├── download-wasm.js    # 下载 WASM 文件
-│   └── prepare-sandbox.js  # 准备测试沙盒
-├── wasm/                   # Tree-sitter WASM 文件
-├── dist/                   # 编译输出目录
-├── esbuild.js              # 构建脚本
-├── package.json            # 项目配置
-└── tsconfig.json           # TypeScript 配置
+├── src/
+│   ├── core/                       # 平台无关的核心逻辑
+│   │   ├── types.ts                # 接口定义（IPlatformAdapter, IModeListener）
+│   │   ├── controller.ts           # 主控制器：分析 → 切换调度
+│   │   └── state-tracker.ts        # IME 状态追踪（轮询、手动/自动切换检测）
+│   ├── modes/                      # 模式特定行为
+│   │   ├── normal.ts               # 普通编辑器模式监听器
+│   │   └── vim.ts                  # Vim 模式监听器（ESC、Insert/Normal 检测）
+│   ├── platforms/                  # 平台实现
+│   │   ├── index.ts                # 平台工厂（自动检测 Linux/Windows）
+│   │   ├── linux/adapter.ts        # Linux 适配器（Fcitx5/4/IBus）
+│   │   └── windows/
+│   │       ├── adapter.ts          # Windows 适配器
+│   │       └── dual-keyboard.ts    # 双键盘策略（Layout 切换）
+│   ├── win32/                      # Windows 底层 FFI
+│   │   ├── ime-ffi.ts              # Win32 API FFI 绑定 (koffi)
+│   │   ├── tsf-ffi.ts              # TSF COM 绑定
+│   │   ├── tsf-pipe.ts             # TSF 持久化 PowerShell 管道
+│   │   └── tsf-helper.cs           # C# TSF 检测辅助
+│   ├── extension.ts                # 扩展入口（薄层）
+│   ├── ASTAnalyzer.ts              # Tree-sitter AST 分析器
+│   └── logger.ts                   # 统一日志模块
+├── test/                           # 测试
+│   ├── mock-koffi-test.js          # Windows Mock 测试（39 个用例）
+│   ├── mock-linux-ime-test.js      # Linux Mock 测试（70 个用例）
+│   └── ast-analyzer-test.js        # AST 分析器测试（59 个用例）
+├── scripts/                        # 辅助脚本
+│   ├── check-env.js                # 环境检测
+│   ├── download-wasm.js            # 下载 WASM 文件
+│   └── prepare-sandbox.js          # 准备测试沙盒
+├── wasm/                           # Tree-sitter WASM 文件
+├── dist/                           # 编译输出目录
+├── esbuild.js                      # 构建脚本
+├── package.json                    # 项目配置
+└── tsconfig.json                   # TypeScript 配置
 ```
 
 ### 开发流程
@@ -171,7 +183,7 @@ node test/ast-analyzer-test.js
 # Linux IME 管理器 Mock 测试（70 个用例）
 node test/mock-linux-ime-test.js
 
-# Windows IME 管理器 Mock 测试（40 个用例）
+# Windows IME 管理器 Mock 测试（39 个用例）
 node test/mock-koffi-test.js
 ```
 
@@ -190,13 +202,12 @@ node test/mock-koffi-test.js
 
 ## 工作原理
 
-1. **事件监听**：监听光标移动和文档变化事件
+1. **事件监听**：模式监听器（Normal/Vim）监听光标移动和文档变化事件
 2. **快速路径**：同步文本启发式检测行注释和块注释，命中时跳过 AST 解析
 3. **AST 解析**：使用 Tree-sitter 增量解析代码，判断光标是否在注释/字符串中
-4. **输入法切换**：
-   - Linux：通过 shell 命令调用 Fcitx5/Fcitx4/IBus
-   - Windows：koffi FFI 直调 Win32 API（IMM32 → TSF 管道 → 键盘布局切换，自动降级）
-5. **状态栏更新**：实时更新状态栏显示
+4. **切换决策**：控制器根据上下文决定是否切换（方案 A：只在注释中切换中文，字符串不干预）
+5. **平台切换**：平台适配器执行实际切换（Linux: Fcitx5/IBus 命令，Windows: 键盘布局切换）
+6. **状态栏更新**：乐观更新状态栏显示（先更新显示，再执行切换）
 
 ## 常见问题
 

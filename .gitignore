@@ -20,12 +20,7 @@ Thumbs.db
 *.swo
 *~
 .codegraph/
-LazyInputSwitcher/
-auto-ime.log
 
-# AI memory and test logs (may contain sensitive info)
-AI-MEMORY.md
-windows测试日志/
 
 # Graphify output
 graphify-out/
