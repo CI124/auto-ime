@@ -10,6 +10,16 @@
 > **⚠ 实验性版本**：Windows 平台已实机测试，核心功能可用，性能和稳定性仍在优化中。
 
 ### 新增
+- **ASTAnalyzer 单元测试**：新增 `test/ast-analyzer-test.js`（59 个用例），覆盖 TypeScript/Python/C++ 三种语言
+  - 光标在普通代码/单行注释/多行注释/字符串/模板字符串内的检测
+  - 快速文本启发式 (`isCursorInCommentFast`) 全路径验证
+  - 两阶段检测管道一致性验证
+  - QueryCache 缓存行为验证
+  - 大文件性能基准（5000 行解析 < 2000ms）
+  - 增量解析与取消机制验证
+  - 边界情况（空文件、注释起始边界、字符串引号边界）
+
+### 新增
 - **Linux 平台 Mock 测试**：新增 `test/mock-linux-ime-test.js`（70 个用例），覆盖 Fcitx5Manager、Fcitx4Manager、IBusManager 的完整行为
   - 三种 IME 管理器的查询/切换命令验证
   - 责任链降级测试（Fcitx5 → Fcitx4 → IBus → NullManager）
@@ -53,6 +63,12 @@
 - **修复 TSF PowerShell 阻塞**：跳过 `setTSFMode`（内部调用 PowerShell 同步阻塞 ~300ms）
 
 ### 优化
+- **Tree-sitter 增量解析**：`parser.parse(text, lastTree)` 替代全量解析，大文件解析速度提升约 3 倍
+- **解析取消机制**：`analysisGeneration` 计数器自动丢弃过期解析结果，避免快速光标移动时资源浪费
+- **动态防抖**：根据文件行数自动调整延迟（<500 行: 10ms / 500-5000 行: 30ms / >5000 行: 60ms）
+- **Python 字符串检测修复**：Python Query 简化为 `(comment) + (string)`，修复普通字符串（非文档字符串）漏检问题
+- **资源管理**：新增 `ASTAnalyzer.dispose()` 释放 Tree/Query/Language/Parser 对象，防止内存泄漏
+- **构建修复**：esbuild 添加 `debug` 到 external 列表，解决 `usocket` 传递依赖构建失败
 - 日志精简：删除 `[ModeDetect]`、`[Escape]`、`[AST] Language cache is null` 等高频噪音日志
 - 日志增强：`analyzeAndSwitch` 输出光标位置、语言、Vim 模式、检测结果、切换动作
 - 日志增强：`ime-switcher` 输出切换方法和耗时

@@ -13,7 +13,7 @@
 - **ESC 强制切换**：Vim 模式下按 ESC 退回 Normal 模式时强制切换到英文输入法
 - **状态栏显示**：底部状态栏实时显示当前输入法状态，支持点击切换
 - **多语言支持**：JavaScript、TypeScript、Python、Go、Rust、C、C++、CSS、HTML、Lua、Java、Kotlin、Bash
-- **高性能**：Tree-sitter WASM 解析 + 同步文本快速检测，30ms 防抖响应
+- **高性能**：Tree-sitter WASM 增量解析 + 同步文本快速检测 + 动态防抖响应
 
 ## 支持的语言和注释类型
 
@@ -158,6 +158,9 @@ npm run watch
 # 环境检测（检查本地输入法框架是否就绪）
 npm run check-env
 
+# AST 分析器测试（59 个用例，覆盖 TS/Python/C++）
+node test/ast-analyzer-test.js
+
 # Linux IME 管理器 Mock 测试（70 个用例）
 node test/mock-linux-ime-test.js
 
@@ -181,11 +184,12 @@ node test/mock-koffi-test.js
 ## 工作原理
 
 1. **事件监听**：监听光标移动和文档变化事件
-2. **AST 解析**：使用 Tree-sitter 解析代码，判断光标是否在注释/字符串中
-3. **输入法切换**：
+2. **快速路径**：同步文本启发式检测行注释和块注释，命中时跳过 AST 解析
+3. **AST 解析**：使用 Tree-sitter 增量解析代码，判断光标是否在注释/字符串中
+4. **输入法切换**：
    - Linux：通过 shell 命令调用 Fcitx5/Fcitx4/IBus
    - Windows：通过 PowerShell 调用 Win32 `SendMessageW` API 切换键盘布局
-4. **状态栏更新**：实时更新状态栏显示
+5. **状态栏更新**：实时更新状态栏显示
 
 ## 常见问题
 
@@ -203,8 +207,9 @@ node test/mock-koffi-test.js
 
 ### 性能问题
 
-- 扩展使用 30ms 防抖（文档变化）和 50ms 防抖（光标移动），响应速度快
+- 扩展使用动态防抖（小文件 10ms / 中文件 30ms / 大文件 60ms），根据文件大小自动调整
 - 注释检测优先走同步快速路径，Tree-sitter AST 分析仅在必要时执行（< 0.01ms/次）
+- Tree-sitter 增量解析：相同文件连续解析仅重新解析变更部分，速度提升约 3 倍
 - 如果仍有延迟，检查系统输入法框架是否正常
 
 ## 贡献
