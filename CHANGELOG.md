@@ -5,31 +5,54 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [0.6.0-beta] - 2026-06-03
+## [0.6.0-beta] - 2026-06-04
 
-> **⚠ 实验性版本**：以下所有变更均未在 Windows 实机上验证，仅在 Linux 上通过构建和逻辑审查。请谨慎使用，欢迎反馈问题。
+> **⚠ 实验性版本**：Windows 平台已实机测试，核心功能可用，性能和稳定性仍在优化中。
 
 ### 新增
-- **koffi FFI 基础层**：用 koffi（Node.js FFI）直接调用 `user32.dll` / `imm32.dll`，替代 PowerShell 方案，理论性能从 ~100ms 提升到 <1ms
-- **IMM32 兼容层**：通过 `ImmGetConversionStatus` / `ImmSetConversionStatus` 直接读写输入法中英文模式，支持搜狗/百度等 IMM32 输入法
+- **koffi FFI 基础层**：用 koffi（Node.js FFI）直接调用 `user32.dll` / `imm32.dll` / `kernel32.dll`，替代 PowerShell 方案
+- **IMM32 兼容层**：通过 `ImmGetConversionStatus` / `ImmSetConversionStatus` 直接读写输入法中英文模式
 - **TSF 检测**：通过 koffi 调用 `ole32.dll` COM 函数检测 TSF 输入法（如微软拼音）
-- **TSF compartment 读写**：通过 PowerShell COM 互操作访问 `ITfCompartment`，作为 IMM32 失败时的降级路径
-- **三层切换策略**：IMM32 → TSF compartment → 键盘布局切换，自动降级
-- **多语言支持**：新增繁体中文(台湾1028/香港3076/澳门5124)和新加坡中文(4100)的 Language ID 支持
+- **三层切换策略**：IMM32 → TSF → 键盘布局切换（`WM_INPUTLANGCHANGEREQUEST`），自动降级
+- **多语言支持**：新增繁体中文(台湾1028/香港3076/澳门5124)和新加坡中文(4100)
 - **窗口焦点恢复**：`onDidChangeWindowState` 监听，窗口重新获得焦点时同步 IME 状态
 - **光标样式事件**：`onDidChangeTextEditorOptions` 监听，Vim 模式 Insert↔Normal 切换检测更精确
-- **可配置轮询间隔**：新增 `auto-ime.windows.pollingInterval` 配置项（默认 100ms，范围 50-500）
-- **PowerShell 回退**：koffi 加载失败时自动降级到 PowerShell 方案
+- **可配置轮询间隔**：新增 `auto-ime.windows.pollingInterval` 配置项（默认 1000ms，范围 50-500）
+- **PowerShell 回退**：koffi 加载失败时自动降级到 PowerShell 方案（临时 .ps1 文件 + `-File` 参数）
+- **统一日志系统**：VSCode 输出面板和日志文件同步写入，内容完全一致
+- **智能切换检查**：切换前先查询当前模式，相同则跳过，避免重复切换
+- **指数退避恢复**：PowerShell 连续失败后暂停 5s→10s→20s→40s，自动恢复重试
+- **全局错误捕获**：`activate` 函数 try/catch，崩溃信息写入日志文件
+
+### 修复
+- **修复 koffi `GetCurrentThreadId` 加载失败**：从 `user32.dll` 改为 `kernel32.dll`（该函数实际在 kernel32 中）
+- **修复 koffi BigInt 类型混用**：所有 Win32 API 返回值添加显式 `BigInt()` / `Number()` 转换
+- **修复 koffi `_Out_` 参数缺失**：`GetWindowThreadProcessId` 和 `ImmGetConversionStatus` 的输出参数添加 `_Out_` 注解
+- **修复 `queryIMEMode()` 永远返回字符串**：IMM32 失败时返回 `null`，由调用方决定回退策略
+- **修复 `queryMode()` 隐藏轮询停止**：不再将 `''` 强制转为 `'en'`
+- **修复 PowerShell `-EncodedCommand` 编码失败**：改用写临时 `.ps1` 文件 + `-File` 参数执行
+- **修复 PowerShell 连续失败后永久停止**：改为指数退避（5s→40s），自动恢复
+- **修复 WASM 文件路径错误**：`out/wasm/` → `dist/wasm/`
+- **修复日志递归调用**：`log(msg)` 误调自身导致栈溢出
+- **修复切换阻塞 400-800ms**：`SendMessageW`（同步）→ `PostMessageW`（异步）
+- **修复 TSF PowerShell 阻塞**：跳过 `setTSFMode`（内部调用 PowerShell 同步阻塞 ~300ms）
 
 ### 优化
-- Windows IME 切换从 PowerShell 子进程改为 koffi FFI 直接调用
-- `WindowsIMEManager` 重构为使用 `IMESwitcher` 统一切换入口
-- `queryMode()` 增加活跃管理器实例回退，修复 koffi 不可用时硬编码返回 `'en'` 的问题
+- 日志精简：删除 `[ModeDetect]`、`[Escape]`、`[AST] Language cache is null` 等高频噪音日志
+- 日志增强：`analyzeAndSwitch` 输出光标位置、语言、Vim 模式、检测结果、切换动作
+- 日志增强：`ime-switcher` 输出切换方法和耗时
+- 轮询间隔从 500ms 调整为 1000ms，降低 CPU 占用
+- 每次启动清空旧日志文件
 
 ### 已知问题
-- 所有 Windows 相关代码（koffi FFI、IMM32、TSF）均未在 Windows 实机测试
-- TSF compartment 读写依赖 PowerShell COM，性能较慢（~100ms）
-- `ASTAnalyzer.ts` 存在预先的 `esModuleInterop` 类型错误（非本次引入）
+- 当前使用"双键盘"方案（英语键盘1033 ↔ 中文键盘2052），非单键盘内中英文切换
+- IMM32 对微软拼音等 TSF 输入法无效（`ImmGetContext` 返回 null），降级到键盘布局切换
+- TSF compartment 读写依赖 PowerShell（~300ms），已从切换路径中跳过
+
+### 待办
+- 性能优化：当前双键盘方案每次切换仍有一定延迟，需进一步优化
+- 单键盘切换：研究 `im-select` 源码，借鉴 TSF COM 实现真正的单键盘内中英文切换
+- TSF 原生支持：编写 C++ DLL 封装 TSF COM 接口，通过 koffi 调用，替代 PowerShell
 
 ## [0.5.0] - 2026-06-03
 
@@ -113,7 +136,7 @@
 - 自动检测 Fcitx5/Fcitx4/IBus
 - 300ms 防抖响应
 
-[0.6.0-beta]: https://github.com/CI124/auto-ime/compare/v0.5.0...v0.6.0-beta
+[0.6.0-beta]: https://github.com/CI124/auto-ime/compare/v0.5.0...v0.6.0-beta2
 [0.5.0]: https://github.com/CI124/auto-ime/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/CI124/auto-ime/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/CI124/auto-ime/compare/v0.2.0...v0.3.0

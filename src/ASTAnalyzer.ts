@@ -106,7 +106,6 @@ export class ASTAnalyzer {
         if (this.languageMap.has(languageId)) {
             const cached = this.languageMap.get(languageId) ?? null;
             if (!cached) {
-                this.logInfo(`[AST] Language cache is null for ${languageId}, skipping.`);
             }
             return cached;
         }
@@ -117,7 +116,7 @@ export class ASTAnalyzer {
             return null;
         }
 
-        const wasmPath = path.join(this.extensionContext.extensionPath, 'out', 'wasm', wasmFile);
+        const wasmPath = path.join(this.extensionContext.extensionPath, 'dist', 'wasm', wasmFile);
 
         try {
             const lang = await Parser.Language.load(wasmPath);

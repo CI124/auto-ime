@@ -21,6 +21,7 @@ const BOOL = koffi.alias('BOOL', 'int32_t');
 
 const user32 = koffi.load('user32.dll');
 const imm32 = koffi.load('imm32.dll');
+const kernel32 = koffi.load('kernel32.dll');
 
 // ============ user32.dll 函数绑定 ============
 
@@ -29,7 +30,7 @@ export const GetForegroundWindow = user32.func(
 );
 
 export const GetWindowThreadProcessId = user32.func(
-    'DWORD __stdcall GetWindowThreadProcessId(HWND, DWORD*)'
+    'DWORD __stdcall GetWindowThreadProcessId(HWND, _Out_ DWORD*)'
 );
 
 export const GetKeyboardLayout = user32.func(
@@ -44,11 +45,15 @@ export const SendMessageW = user32.func(
     'LRESULT __stdcall SendMessageW(HWND, UINT, WPARAM, LPARAM)'
 );
 
+export const PostMessageW = user32.func(
+    'BOOL __stdcall PostMessageW(HWND, UINT, WPARAM, LPARAM)'
+);
+
 export const AttachThreadInput = user32.func(
     'BOOL __stdcall AttachThreadInput(DWORD, DWORD, BOOL)'
 );
 
-export const GetCurrentThreadId = user32.func(
+export const GetCurrentThreadId = kernel32.func(
     'DWORD __stdcall GetCurrentThreadId()'
 );
 
@@ -63,7 +68,7 @@ export const ImmReleaseContext = imm32.func(
 );
 
 export const ImmGetConversionStatus = imm32.func(
-    'BOOL __stdcall ImmGetConversionStatus(void*, uint32_t*, uint32_t*)'
+    'BOOL __stdcall ImmGetConversionStatus(void*, _Out_ uint32_t*, _Out_ uint32_t*)'
 );
 
 export const ImmSetConversionStatus = imm32.func(
@@ -93,18 +98,18 @@ export const IME_CMODE_CHINESE = 0x0001;        // 中文模式（同 NATIVE）
  * 获取真正的前台窗口句柄（处理线程输入附加）
  */
 export function getTrueForegroundWindow(): bigint {
-    let hwnd = GetForegroundWindow() as bigint;
+    let hwnd = BigInt(GetForegroundWindow() as any);
     if (!hwnd) return 0n;
 
     const tidBuf = [0];
     GetWindowThreadProcessId(hwnd, tidBuf);
-    const targetTid = tidBuf[0];
-    const currentTid = GetCurrentThreadId() as number;
+    const targetTid = Number(tidBuf[0]);
+    const currentTid = Number(GetCurrentThreadId() as any);
 
     if (currentTid !== targetTid) {
         const attached = AttachThreadInput(currentTid, targetTid, 1);
         if (attached) {
-            hwnd = GetForegroundWindow() as bigint;
+            hwnd = BigInt(GetForegroundWindow() as any);
             AttachThreadInput(currentTid, targetTid, 0);
         }
     }
@@ -121,7 +126,7 @@ export function getCurrentLanguageId(): number {
 
     const tidBuf = [0];
     GetWindowThreadProcessId(hwnd, tidBuf);
-    const hkl = GetKeyboardLayout(tidBuf[0]) as bigint;
+    const hkl = BigInt(GetKeyboardLayout(Number(tidBuf[0])) as any);
     return Number(hkl & 0xFFFFn);
 }
 
@@ -175,37 +180,30 @@ export function enumerateKeyboardLayouts(): { enLangId: number; zhLangId: number
 export function switchKeyboardLayout(langId: number): void {
     const hwnd = getTrueForegroundWindow();
     if (!hwnd) return;
-    SendMessageW(hwnd, WM_INPUTLANGCHANGEREQUEST, 0, BigInt(langId));
+    PostMessageW(hwnd, WM_INPUTLANGCHANGEREQUEST, BigInt(0), BigInt(langId));
 }
 
 // ============ IMM32 输入法模式查询/切换 ============
 
 /**
  * 查询当前输入法的中文/英文模式（通过 IMM32 ImmGetConversionStatus）
- * 返回 'zh' | 'en'，失败时回退到 Language ID 判断
+ * 返回 'zh' | 'en'，IMM32 不可用时返回 null（由调用方决定回退策略）
  */
-export function queryIMEMode(): 'zh' | 'en' {
+export function queryIMEMode(): 'zh' | 'en' | null {
     const hwnd = getTrueForegroundWindow();
-    if (!hwnd) return 'en';
+    if (!hwnd) return null;
 
     const hImmCtx = ImmGetContext(hwnd);
-    if (!hImmCtx) {
-        // 无 IMM 上下文，回退到 Language ID 判断
-        const langId = getCurrentLanguageId();
-        return isChineseLangId(langId) ? 'zh' : 'en';
-    }
+    if (!hImmCtx) return null;
 
     const convBuf = [0];
     const sentBuf = [0];
     const ok = ImmGetConversionStatus(hImmCtx, convBuf, sentBuf);
     ImmReleaseContext(hwnd, hImmCtx);
 
-    if (!ok) {
-        const langId = getCurrentLanguageId();
-        return isChineseLangId(langId) ? 'zh' : 'en';
-    }
+    if (!ok) return null;
 
-    return (convBuf[0] & IME_CMODE_NATIVE) !== 0 ? 'zh' : 'en';
+    return (Number(convBuf[0]) & IME_CMODE_NATIVE) !== 0 ? 'zh' : 'en';
 }
 
 /**
@@ -250,10 +248,11 @@ export function setIMEMode(chinese: boolean): boolean {
     const sentBuf = [0];
     ImmGetConversionStatus(hImmCtx, convBuf, sentBuf);
 
+    const currentConv = Number(convBuf[0]);
     if (chinese) {
-        convBuf[0] = convBuf[0] | IME_CMODE_NATIVE;
+        convBuf[0] = currentConv | IME_CMODE_NATIVE;
     } else {
-        convBuf[0] = convBuf[0] & ~IME_CMODE_NATIVE;
+        convBuf[0] = currentConv & ~IME_CMODE_NATIVE;
     }
 
     const ok = ImmSetConversionStatus(hImmCtx, convBuf[0], sentBuf[0]);

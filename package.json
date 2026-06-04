@@ -57,7 +57,7 @@
         },
         "auto-ime.windows.pollingInterval": {
           "type": "number",
-          "default": 100,
+          "default": 1000,
           "minimum": 50,
           "maximum": 500,
           "description": "Windows IME state polling interval in milliseconds (lower = more responsive, higher = less CPU)"
@@ -71,6 +71,7 @@
     "watch": "node esbuild.js --watch"
   },
   "dependencies": {
+    "@koromix/koffi-win32-x64": "^3.0.2",
     "dbus-next": "^0.10.2",
     "koffi": "^3.0.2",
     "web-tree-sitter": "^0.22.6"
