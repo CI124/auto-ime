@@ -5,6 +5,21 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.4-beta] - 2026-06-04
+
+### 新增
+- **异步切换集成到主路径**：`analyzeAndSwitch` 现在优先使用 `switchToChineseAsync`/`switchToEnglishAsync`（TSF 管道 ~5ms），不可用时降级到同步方法
+- **IIMEManager 接口扩展**：新增可选的 `switchToChineseAsync`/`switchToEnglishAsync` 方法，Windows 平台自动实现
+
+### 优化
+- ESC 和状态栏手动切换仍使用同步路径（用户操作场景延迟可接受）
+- 自动切换（光标上下文分析）使用异步路径（TSF 管道，无阻塞）
+
+### 验证
+- Windows mock 测试：40/40 通过
+- Linux mock 测试：70/70 通过
+- Bundle 确认包含 7 处 `switchToChineseAsync` + 5 处 `switchToEnglishAsync` 调用
+
 ## [0.6.3-beta] - 2026-06-04
 
 ### 修复
@@ -217,6 +232,7 @@
 - 自动检测 Fcitx5/Fcitx4/IBus
 - 300ms 防抖响应
 
+[0.6.4-beta]: https://github.com/CI124/auto-ime/compare/v0.6.3-beta...v0.6.4-beta
 [0.6.3-beta]: https://github.com/CI124/auto-ime/compare/v0.6.2-beta...v0.6.3-beta
 [0.6.2-beta]: https://github.com/CI124/auto-ime/compare/v0.6.1-beta...v0.6.2-beta
 [0.6.1-beta]: https://github.com/CI124/auto-ime/compare/v0.6.0-beta...v0.6.1-beta

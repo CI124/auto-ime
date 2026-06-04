@@ -164,7 +164,11 @@ export async function activate(context: vscode.ExtensionContext) {
             if (currentIMEMode !== 'zh') {
                 logger.info(`[${cursor}] ${lang} vim=${vimMode} → comment (fast) → switch to ZH`);
                 imeStateManager.markAutoSwitch();
-                imeManager.switchToChinese();
+                if (imeManager.switchToChineseAsync) {
+                    await imeManager.switchToChineseAsync();
+                } else {
+                    imeManager.switchToChinese();
+                }
                 updateStatusBar('zh');
             }
             return;
@@ -177,14 +181,22 @@ export async function activate(context: vscode.ExtensionContext) {
             if (currentIMEMode !== 'zh') {
                 logger.info(`[${cursor}] ${lang} vim=${vimMode} → ${astResult.type} → switch to ZH`);
                 imeStateManager.markAutoSwitch();
-                imeManager.switchToChinese();
+                if (imeManager.switchToChineseAsync) {
+                    await imeManager.switchToChineseAsync();
+                } else {
+                    imeManager.switchToChinese();
+                }
                 updateStatusBar('zh');
             }
         } else {
             if (currentIMEMode !== 'en') {
                 logger.info(`[${cursor}] ${lang} vim=${vimMode} → code → switch to EN`);
                 imeStateManager.markAutoSwitch();
-                imeManager.switchToEnglish();
+                if (imeManager.switchToEnglishAsync) {
+                    await imeManager.switchToEnglishAsync();
+                } else {
+                    imeManager.switchToEnglish();
+                }
                 updateStatusBar('en');
             }
         }
