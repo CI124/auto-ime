@@ -45,23 +45,23 @@ export class ASTAnalyzer {
         'shellscript': 'tree-sitter-bash.wasm'
     };
 
-    // Tree-sitter Query 模式：捕获注释和字符串节点
+    // Tree-sitter Query 模式：捕获注释和字符串节点（使用不同 capture 名区分）
     private readonly COMMENT_QUERY: Record<string, string> = {
-        'javascript': `(comment) @comment\n(string) @comment\n(template_string) @comment`,
-        'javascriptreact': `(comment) @comment\n(string) @comment\n(template_string) @comment`,
-        'typescript': `(comment) @comment\n(string) @comment\n(template_string) @comment`,
-        'typescriptreact': `(comment) @comment\n(string) @comment\n(template_string) @comment`,
-        'python': `(comment) @comment\n(string) @comment`,
-        'go': `(comment) @comment\n(interpreted_string_literal) @comment\n(raw_string_literal) @comment`,
-        'rust': `(line_comment) @comment\n(block_comment) @comment\n(string_literal) @comment\n(raw_string_literal) @comment`,
-        'c': `(comment) @comment\n(string_literal) @comment`,
-        'cpp': `(comment) @comment\n(string_literal) @comment\n(raw_string_literal) @comment`,
+        'javascript': `(comment) @comment\n(string) @string\n(template_string) @string`,
+        'javascriptreact': `(comment) @comment\n(string) @string\n(template_string) @string`,
+        'typescript': `(comment) @comment\n(string) @string\n(template_string) @string`,
+        'typescriptreact': `(comment) @comment\n(string) @string\n(template_string) @string`,
+        'python': `(comment) @comment\n(string) @string`,
+        'go': `(comment) @comment\n(interpreted_string_literal) @string\n(raw_string_literal) @string`,
+        'rust': `(line_comment) @comment\n(block_comment) @comment\n(string_literal) @string\n(raw_string_literal) @string`,
+        'c': `(comment) @comment\n(string_literal) @string`,
+        'cpp': `(comment) @comment\n(string_literal) @string\n(raw_string_literal) @string`,
         'html': `(comment) @comment`,
         'css': `(comment) @comment`,
-        'lua': `(comment) @comment\n(string) @comment`,
-        'java': `(comment) @comment\n(string_literal) @comment`,
-        'kotlin': `(comment) @comment\n(string_literal) @comment`,
-        'shellscript': `(comment) @comment\n(string) @comment\n(raw_string) @comment\n(heredoc_body) @comment`
+        'lua': `(comment) @comment\n(string) @string`,
+        'java': `(comment) @comment\n(string_literal) @string`,
+        'kotlin': `(comment) @comment\n(string_literal) @string`,
+        'shellscript': `(comment) @comment\n(string) @string\n(raw_string) @string\n(heredoc_body) @string`
     };
 
     // 编译后的 Query 对象缓存
