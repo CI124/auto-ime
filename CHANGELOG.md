@@ -5,6 +5,22 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.6-beta] - 2026-06-04
+
+### 修复
+- **P0: 修复 analyzeAndSwitch 双重触发**：添加 generation 计数器，selection 和 document 事件共享同一个 debounce timer，后到的事件会覆盖前一个，确保 analyzeAndSwitch 只执行一次
+- **P1: 过滤非代码文件**：在 analyzeAndSwitch 入口处检查 `document.uri.scheme`，只处理 `file` 和 `untitled` scheme，跳过 Code Runner 输出面板、diff 视图等无意义分析
+- **P2: 增强 TSF 检测日志**：IMESwitcher 初始化时输出键盘布局十六进制值、TSF COM 对象可用性、TSF pipe 状态；异步切换方法添加 tsf-pipe 尝试/成功/失败的详细日志
+
+### 优化
+- `scheduleAnalyze` 使用 generation 计数器，避免 selection + document 事件各触发一次导致 analyzeAndSwitch 执行两次
+- TSF 检测失败时输出具体原因（COM 对象不可用 vs pipe 未初始化）
+- 新增 `getTSFPipeStatus()` 导出方法，用于运行时诊断 TSF 管道状态
+
+### 验证
+- Windows mock 测试：40/40 通过
+- Bundle 确认包含 generation 计数器、scheme 过滤、TSF pipe 状态检查
+
 ## [0.6.5-beta] - 2026-06-04
 
 ### 修复

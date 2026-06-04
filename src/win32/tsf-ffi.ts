@@ -154,6 +154,13 @@ export function disposeTSFPipe(): void {
     }
 }
 
+/**
+ * Get TSF pipe status for diagnostics
+ */
+export function getTSFPipeStatus(): { exists: boolean; available: boolean } {
+    return { exists: !!_pipe, available: _pipe?.isAvailable() ?? false };
+}
+
 // ============ 公共 API（同步回退） ============
 
 /**

@@ -6,6 +6,7 @@ import { createLogger, LogSink } from './logger';
 
 let astAnalyzer: ASTAnalyzer;
 let analyzeDebounceTimer: NodeJS.Timeout | null = null;
+let analyzeGeneration = 0; // P0: generation counter to prevent double-trigger
 let modeDetectionTimer: NodeJS.Timeout | null = null;
 let outputChannel: vscode.OutputChannel;
 let statusBarItem: vscode.StatusBarItem;
@@ -141,6 +142,13 @@ export async function activate(context: vscode.ExtensionContext) {
     // 核心分析函数：检测光标上下文并切换输入法
     async function analyzeAndSwitch(editor: vscode.TextEditor) {
         const document = editor.document;
+
+        // P1: skip non-code documents (output panels, diff views, etc.)
+        const scheme = document.uri.scheme;
+        if (scheme !== 'file' && scheme !== 'untitled') {
+            return;
+        }
+
         const position = editor.selections[0].active;
         const cursor = `L${position.line + 1}:${position.character}`;
         const lang = document.languageId;
@@ -208,10 +216,12 @@ export async function activate(context: vscode.ExtensionContext) {
     }
 
     // 统一分析调度（动态防抖: 根据文件大小调整延迟）
+    // P0: generation counter prevents double-trigger from selection + document events
     function scheduleAnalyze() {
         if (analyzeDebounceTimer) {
             clearTimeout(analyzeDebounceTimer);
         }
+        const gen = ++analyzeGeneration;
         const editor = vscode.window.activeTextEditor;
         const lineCount = editor?.document.lineCount ?? 0;
         // 小文件 (<500行): 10ms | 中文件 (500-5000行): 30ms | 大文件 (>5000行): 60ms
@@ -219,6 +229,8 @@ export async function activate(context: vscode.ExtensionContext) {
         analyzeDebounceTimer = setTimeout(() => {
             if (!editor) return;
             if (isVimMode && !isInInsertMode(editor)) return;
+            // P0: skip if a newer scheduleAnalyze call was made
+            if (gen !== analyzeGeneration) return;
             analyzeAndSwitch(editor);
         }, delay);
     }
