@@ -453,8 +453,8 @@ test('queryMode 不再调用 TSF (已移至 queryIMEMode 内部)', () => {
 test('queryIMEMode 包含 Language ID 降级逻辑', () => {
     // queryIMEMode 函数体内应包含 getCurrentLanguageId 和 isChineseLangId
     const queryIMEModeSection = bundleSrc.substring(
-        bundleSrc.indexOf('function queryIMEMode()'),
-        bundleSrc.indexOf('function queryTSFMode2()')
+        bundleSrc.indexOf('function queryIMEMode('),
+        bundleSrc.indexOf('function queryTSFMode(')
     );
     assert.ok(queryIMEModeSection.includes('getCurrentLanguageId'), 'queryIMEMode 应包含 getCurrentLanguageId 调用');
     assert.ok(queryIMEModeSection.includes('isChineseLangId'), 'queryIMEMode 应包含 isChineseLangId 调用');

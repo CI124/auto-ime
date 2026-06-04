@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import Parser from 'web-tree-sitter';
 import * as path from 'path';
+import { LogSink } from './logger';
 
 /**
  * 【开发者必读】：WASM 文件存放与构建说明
@@ -18,6 +19,7 @@ export class ASTAnalyzer {
     private languageMap = new Map<string, Parser.Language | null>();
     private extensionContext: vscode.ExtensionContext;
     private outputChannel: vscode.OutputChannel;
+    private logger: LogSink;
 
     // 增量解析: 缓存上一次的 Tree，供 parser.parse(text, oldTree) 使用
     private lastTree: Parser.Tree | null = null;
@@ -65,20 +67,10 @@ export class ASTAnalyzer {
     // 编译后的 Query 对象缓存
     private queryCache = new Map<string, Parser.Query | null>();
 
-    constructor(context: vscode.ExtensionContext, outputChannel: vscode.OutputChannel) {
+    constructor(context: vscode.ExtensionContext, outputChannel: vscode.OutputChannel, logger: LogSink) {
         this.extensionContext = context;
         this.outputChannel = outputChannel;
-    }
-
-    private logInfo(message: string): void {
-        console.log(message);
-        this.outputChannel.appendLine(message);
-    }
-
-    private logError(message: string, error?: unknown): void {
-        console.error(message, error);
-        const errorMessage = error instanceof Error ? error.message : error ? String(error) : '';
-        this.outputChannel.appendLine(errorMessage ? `${message} ${errorMessage}` : message);
+        this.logger = logger;
     }
 
     /**
@@ -96,9 +88,9 @@ export class ASTAnalyzer {
             });
             this.parser = new Parser();
             this.initialized = true;
-            this.logInfo('Tree-sitter initialized successfully.');
+            this.logger.info('Tree-sitter initialized successfully.');
         } catch (error) {
-            this.logError('Failed to initialize Tree-sitter', error);
+            this.logger.error(`Failed to initialize Tree-sitter: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
@@ -117,7 +109,7 @@ export class ASTAnalyzer {
 
         const wasmFile = this.WASM_FILE_MAPPING[languageId];
         if (!wasmFile) {
-            this.logInfo(`[AST] No WASM mapping for languageId=${languageId}`);
+            this.logger.info(`[AST] No WASM mapping for languageId=${languageId}`);
             return null;
         }
 
@@ -126,10 +118,10 @@ export class ASTAnalyzer {
         try {
             const lang = await Parser.Language.load(wasmPath);
             this.languageMap.set(languageId, lang);
-            this.logInfo(`[AST] Loaded language WASM for ${languageId}: ${wasmFile}`);
+            this.logger.info(`[AST] Loaded language WASM for ${languageId}: ${wasmFile}`);
             return lang;
         } catch (error) {
-            this.logError(`[AST] WASM load failed for ${languageId} at ${wasmPath}. AST parsing disabled for this language.`, error);
+            this.logger.error(`[AST] WASM load failed for ${languageId} at ${wasmPath}: ${error instanceof Error ? error.message : String(error)}`);
             // 记录已处理，避免重复加载报错
             this.languageMap.set(languageId, null);
             return null;
@@ -153,10 +145,10 @@ export class ASTAnalyzer {
         try {
             const query = lang.query(querySource);
             this.queryCache.set(languageId, query);
-            this.logInfo(`[AST] Query compiled for ${languageId}`);
+            this.logger.info(`[AST] Query compiled for ${languageId}`);
             return query;
         } catch (error) {
-            this.logError(`[AST] Query compile failed for ${languageId}`, error);
+            this.logger.error(`[AST] Query compile failed for ${languageId}: ${error instanceof Error ? error.message : String(error)}`);
             this.queryCache.set(languageId, null);
             return null;
         }

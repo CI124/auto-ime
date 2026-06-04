@@ -11,11 +11,7 @@ import { ChildProcess, spawn } from 'child_process';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
-
-type LogSink = {
-    info: (message: string) => void;
-    error: (message: string) => void;
-};
+import { LogSink } from '../logger';
 
 type PendingCall = {
     resolve: (value: string) => void;
@@ -257,7 +253,9 @@ if ($tsf) {
         // Response format: "QUERY:0" or "QUERY:1" or "QUERY:ERROR:..."
         const match = response.match(/^QUERY:(\d+)$/);
         if (match) {
-            return parseInt(match[1], 10) !== 0 ? 'zh' : 'en';
+            const result = parseInt(match[1], 10) !== 0 ? 'zh' : 'en';
+            this.logger.debug(`[TSFPipe] queryMode: ${result}`);
+            return result;
         }
         return null;
     }
@@ -270,7 +268,9 @@ if ($tsf) {
 
         const val = chinese ? 1 : 0;
         const response = await this.sendCommand(`SET:${val}`);
-        return response === 'SET:OK';
+        const ok = response === 'SET:OK';
+        this.logger.debug(`[TSFPipe] setMode(${chinese}): ${ok ? 'ok' : 'fail'}`);
+        return ok;
     }
 
     /**
@@ -282,6 +282,8 @@ if ($tsf) {
                 resolve(null);
                 return;
             }
+
+            this.logger.debug(`[TSFPipe] sendCommand: ${cmd}`);
 
             const timer = setTimeout(() => {
                 if (this.pending) {
@@ -307,6 +309,7 @@ if ($tsf) {
      * Kill the persistent process
      */
     dispose(): void {
+        this.logger.info('[TSFPipe] dispose: shutting down pipe');
         if (this.process) {
             try {
                 this.process.stdin?.write('EXIT\n');

@@ -4,6 +4,7 @@
  */
 
 import koffi from 'koffi';
+import { LogSink } from '../logger';
 
 // ============ Win32 类型定义 ============
 
@@ -153,7 +154,7 @@ export function isChineseLangId(langId: number): boolean {
 /**
  * 枚举已安装的键盘布局，返回英文和中文的 Language ID
  */
-export function enumerateKeyboardLayouts(): { enLangId: number; zhLangId: number } {
+export function enumerateKeyboardLayouts(logger?: LogSink): { enLangId: number; zhLangId: number } {
     const count = GetKeyboardLayoutList(0, null);
     if (count <= 0) return { enLangId: 0, zhLangId: 0 };
 
@@ -171,15 +172,19 @@ export function enumerateKeyboardLayouts(): { enLangId: number; zhLangId: number
         if (isChineseLangId(langId) && zhLangId === 0) zhLangId = langId;
     }
 
+    logger?.info(`[FFI] Keyboard layouts: en=${enLangId}, zh=${zhLangId}, total=${count}`);
     return { enLangId, zhLangId };
 }
 
 /**
  * 切换键盘布局（通过 WM_INPUTLANGCHANGEREQUEST）
  */
-export function switchKeyboardLayout(langId: number): void {
+export function switchKeyboardLayout(langId: number, logger?: LogSink): void {
     const hwnd = getTrueForegroundWindow();
-    if (!hwnd) return;
+    if (!hwnd) {
+        logger?.warn('[FFI] switchKeyboardLayout: no foreground window');
+        return;
+    }
     PostMessageW(hwnd, WM_INPUTLANGCHANGEREQUEST, BigInt(0), BigInt(langId));
 }
 
@@ -190,7 +195,7 @@ export function switchKeyboardLayout(langId: number): void {
  * 优先使用 IMM32 ImmGetConversionStatus，失败时回退到 Language ID 判断
  * 返回 'zh' | 'en'，仅当两种方法都失败时返回 null
  */
-export function queryIMEMode(): 'zh' | 'en' | null {
+export function queryIMEMode(logger?: LogSink): 'zh' | 'en' | null {
     const hwnd = getTrueForegroundWindow();
     if (!hwnd) return null;
 
@@ -203,17 +208,23 @@ export function queryIMEMode(): 'zh' | 'en' | null {
         ImmReleaseContext(hwnd, hImmCtx);
 
         if (ok) {
-            return (Number(convBuf[0]) & IME_CMODE_NATIVE) !== 0 ? 'zh' : 'en';
+            const result = (Number(convBuf[0]) & IME_CMODE_NATIVE) !== 0 ? 'zh' : 'en';
+            logger?.debug(`[FFI] queryIMEMode: imm32 → ${result}`);
+            return result;
         }
     }
 
     // 第二优先：Language ID（适用于 TSF IME 如微软拼音，ImmGetContext 返回 null）
     const langId = getCurrentLanguageId();
     if (langId !== 0) {
-        if (isChineseLangId(langId)) return 'zh';
-        if (isEnglishLangId(langId)) return 'en';
+        const result = isChineseLangId(langId) ? 'zh' : isEnglishLangId(langId) ? 'en' : null;
+        if (result) {
+            logger?.debug(`[FFI] queryIMEMode: imm32 failed, langId=${langId} → ${result}`);
+            return result;
+        }
     }
 
+    logger?.debug('[FFI] queryIMEMode: all methods failed → null');
     return null;
 }
 
@@ -284,12 +295,15 @@ export function disposeTSFPipe(): void {
  * mode: true=中文, false=英文
  * 返回是否成功
  */
-export function setIMEMode(chinese: boolean): boolean {
+export function setIMEMode(chinese: boolean, logger?: LogSink): boolean {
     const hwnd = getTrueForegroundWindow();
     if (!hwnd) return false;
 
     const hImmCtx = ImmGetContext(hwnd);
-    if (!hImmCtx) return false;
+    if (!hImmCtx) {
+        logger?.debug('[FFI] setIMEMode: ImmGetContext failed');
+        return false;
+    }
 
     const convBuf = [0];
     const sentBuf = [0];
@@ -304,6 +318,12 @@ export function setIMEMode(chinese: boolean): boolean {
 
     const ok = ImmSetConversionStatus(hImmCtx, convBuf[0], sentBuf[0]);
     ImmReleaseContext(hwnd, hImmCtx);
+
+    if (ok) {
+        logger?.debug(`[FFI] setIMEMode(${chinese}) → ok`);
+    } else {
+        logger?.debug('[FFI] setIMEMode: ImmSetConversionStatus failed');
+    }
     return ok !== 0;
 }
 

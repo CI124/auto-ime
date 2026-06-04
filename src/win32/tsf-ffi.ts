@@ -105,16 +105,13 @@ function ensureLoaded() {
 
 // ============ 持久化 PowerShell 管道（快速路径） ============
 
-type LogSink = {
-    info: (message: string) => void;
-    error: (message: string) => void;
-};
+import { LogSink, createNullLogger } from '../logger';
 
 let _pipe: TSFPipe | null = null;
 
 function getPipe(logger?: LogSink): TSFPipe {
     if (!_pipe) {
-        _pipe = new TSFPipe(logger || { info: () => {}, error: () => {} });
+        _pipe = new TSFPipe(logger || createNullLogger());
     }
     return _pipe;
 }
@@ -162,7 +159,7 @@ export function disposeTSFPipe(): void {
 /**
  * 检测当前系统是否有 TSF 输入法管理器
  */
-export function detectTSF(): boolean {
+export function detectTSF(logger?: LogSink): boolean {
     ensureLoaded();
 
     const hr = _CoInitializeEx(null, COINIT_APARTMENTTHREADED);
@@ -174,9 +171,14 @@ export function detectTSF(): boolean {
             CLSID_TF_ThreadMgr, null, CLSCTX_INPROC_SERVER,
             IID_ITfThreadMgr, pUnk
         );
-        if (hr2 !== 0 || !pUnk[0]) return false;
+        if (hr2 !== 0 || !pUnk[0]) {
+            logger?.debug('[TSF] detectTSF: CoCreateInstance failed');
+            return false;
+        }
+        logger?.debug('[TSF] detectTSF: TSF available');
         return true;
-    } catch {
+    } catch (e) {
+        logger?.debug(`[TSF] detectTSF: exception: ${e}`);
         return false;
     }
 }
@@ -185,7 +187,7 @@ export function detectTSF(): boolean {
  * 通过 TSF compartment 读取输入法模式
  * 返回 'zh' | 'en'，失败返回 null（调用方应降级到 IMM32）
  */
-export function queryTSFMode(): 'zh' | 'en' | null {
+export function queryTSFMode(logger?: LogSink): 'zh' | 'en' | null {
     ensureLoaded();
 
     // 尝试通过 PowerShell COM 访问 TSF compartment（最可靠的方式）
@@ -221,10 +223,12 @@ if ($tsf) {
 
         const modeMatch = result.match(/mode:(\d+)/);
         if (modeMatch) {
-            return parseInt(modeMatch[1], 10) !== 0 ? 'zh' : 'en';
+            const mode = parseInt(modeMatch[1], 10) !== 0 ? 'zh' : 'en';
+            logger?.debug(`[TSF] queryTSFMode: ${mode}`);
+            return mode;
         }
-    } catch {
-        // PowerShell 失败，降级
+    } catch (e) {
+        logger?.debug(`[TSF] queryTSFMode: PowerShell failed: ${e}`);
     }
 
     return null;
@@ -235,7 +239,7 @@ if ($tsf) {
  * chinese: true=中文, false=英文
  * 返回是否成功
  */
-export function setTSFMode(chinese: boolean): boolean {
+export function setTSFMode(chinese: boolean, logger?: LogSink): boolean {
     ensureLoaded();
 
     try {
@@ -268,8 +272,11 @@ if ($tsf) {
             timeout: 2000
         }).trim();
 
-        return result.includes('ok');
-    } catch {
+        const ok = result.includes('ok');
+        logger?.debug(`[TSF] setTSFMode(${chinese}): ${ok ? 'ok' : 'fail'}`);
+        return ok;
+    } catch (e) {
+        logger?.debug(`[TSF] setTSFMode: PowerShell failed: ${e}`);
         return false;
     }
 }

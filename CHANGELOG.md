@@ -5,6 +5,22 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.6.2-beta] - 2026-06-04
+
+### 新增
+- **统一日志模块**：新增 `src/logger.ts`，提供 `createLogger(tag, outputChannel?, logFilePath?, minLevel?)` 工厂函数，统一写入 console + VSCode Output Channel + 日志文件
+- **四级日志**：`debug` / `info` / `warn` / `error`，支持最低级别过滤，格式统一为 `[ISO-timestamp] [LEVEL] [TAG] message`
+- **FFI 诊断日志**：`ime-ffi.ts` 所有关键函数（`queryIMEMode`、`setIMEMode`、`enumerateKeyboardLayouts`、`switchKeyboardLayout`）添加可选 logger 参数和 debug 日志
+- **全面日志覆盖**：所有 silent catch 块、dispose/shutdown 路径、skip/none 分支均已添加日志
+
+### 优化
+- **删除 5 处重复 LogSink 定义**：所有文件统一从 `src/logger.ts` 导入
+- **ASTAnalyzer 接入文件日志**：从接收 raw OutputChannel 改为接收 LogSink，AST 错误现在也写入日志文件
+- **NullIMEManager 不再静默**：no-op 调用现在输出 debug 日志
+- **日志语言统一**：所有中文日志消息改为英文
+- **deactivate 日志**：扩展关闭时记录日志
+- **Windows mock 测试**：40/40 通过
+
 ## [0.6.1-beta] - 2026-06-04
 
 > **⚠ 实验性版本**：Windows 平台 TSF 持久化管道已就绪，需实机验证微软拼音单键盘切换。
@@ -192,6 +208,7 @@
 - 自动检测 Fcitx5/Fcitx4/IBus
 - 300ms 防抖响应
 
+[0.6.2-beta]: https://github.com/CI124/auto-ime/compare/v0.6.1-beta...v0.6.2-beta
 [0.6.1-beta]: https://github.com/CI124/auto-ime/compare/v0.6.0-beta...v0.6.1-beta
 [0.6.0-beta]: https://github.com/CI124/auto-ime/compare/v0.5.0...v0.6.0-beta
 [0.5.0]: https://github.com/CI124/auto-ime/compare/v0.4.0...v0.5.0
