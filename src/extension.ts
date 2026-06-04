@@ -432,6 +432,10 @@ export async function activate(context: vscode.ExtensionContext) {
     // 窗口焦点恢复时重新查询输入法状态
     const windowStateChange = vscode.window.onDidChangeWindowState((e) => {
         if (e.focused) {
+            // Sync internal layout state with system (user may have manually switched)
+            if ('syncLayout' in imeManager) {
+                (imeManager as any).syncLayout();
+            }
             const mode = imeManager.queryCurrentMode();
             if (mode && mode !== currentIMEMode) {
                 logger.info(`[Focus] IME state changed externally: ${currentIMEMode} → ${mode}`);
