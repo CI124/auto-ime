@@ -186,8 +186,13 @@ export async function activate(context: vscode.ExtensionContext) {
         const astResult = await astAnalyzer.isCursorInCommentOrString(document, position);
 
         if (astResult.match) {
+            // 方案 A: 只在注释中自动切换中文，字符串不干预
+            if (astResult.type === 'string') {
+                return; // 字符串中保持当前输入法状态
+            }
+            // 注释 → 切中文
             if (currentIMEMode !== 'zh') {
-                logger.info(`[${cursor}] ${lang} vim=${vimMode} → ${astResult.type} → switch to ZH`);
+                logger.info(`[${cursor}] ${lang} vim=${vimMode} → comment → switch to ZH`);
                 updateStatusBar('zh'); // Optimistic update
                 imeStateManager.markAutoSwitch();
                 if (imeManager.switchToChineseAsync) {
