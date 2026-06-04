@@ -106,9 +106,10 @@ export async function activate(context: vscode.ExtensionContext) {
             : undefined
     );
 
-    // ========== Status Bar ==========
-    const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    // ========== Status Bar (right side) ==========
+    const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBarItem.command = 'auto-ime.toggleIME';
+    statusBarItem.show(); // Must explicitly show
     context.subscriptions.push(statusBarItem);
 
     // ========== AST Analyzer ==========
@@ -119,6 +120,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // ========== Controller ==========
     controller = new IMEController(adapter, analyzer, stateTracker, statusBarItem, logger);
+
+    // Initial state: switch to English keyboard and update status bar
+    adapter.switchToEnglish();
     controller.updateStatusBar('en');
 
     // Register toggle command
