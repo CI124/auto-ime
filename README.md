@@ -113,8 +113,14 @@ auto-ime/
 │   ├── extension.ts        # 扩展入口
 │   ├── ASTAnalyzer.ts      # Tree-sitter AST 分析器
 │   ├── IMEManager.ts       # 输入法管理器
-│   └── IMEStateManager.ts  # 输入法状态监听管理器
+│   ├── IMEStateManager.ts  # 输入法状态监听管理器
+│   └── win32/              # Windows FFI 层
+├── test/                   # 测试
+│   ├── mock-linux-ime-test.js  # Linux IME Mock 测试
+│   ├── mock-koffi-test.js      # Windows IME Mock 测试
+│   └── ast-analyzer-test.js    # AST 分析器测试
 ├── scripts/                # 辅助脚本
+│   ├── check-env.js        # 环境检测（输入法/D-Bus 连通性）
 │   ├── download-wasm.js    # 下载 WASM 文件
 │   └── prepare-sandbox.js  # 准备测试沙盒
 ├── wasm/                   # Tree-sitter WASM 文件
@@ -127,8 +133,11 @@ auto-ime/
 ### 开发流程
 
 ```bash
-# 安装依赖
+# 安装依赖（自动下载 WASM 文件）
 npm install
+
+# 检测本地输入法环境（compile/watch 前自动执行）
+npm run check-env
 
 # 监听模式（自动编译）
 npm run watch
@@ -145,7 +154,18 @@ npm run watch
 
 ### 测试
 
-扩展使用 VS Code 沙盒环境进行测试：
+```bash
+# 环境检测（检查本地输入法框架是否就绪）
+npm run check-env
+
+# Linux IME 管理器 Mock 测试（70 个用例）
+node test/mock-linux-ime-test.js
+
+# Windows IME 管理器 Mock 测试（26 个用例）
+node test/mock-koffi-test.js
+```
+
+扩展也使用 VS Code 沙盒环境进行手动测试：
 
 1. 按 `F5` 启动调试
 2. 在弹出的沙盒窗口中测试功能

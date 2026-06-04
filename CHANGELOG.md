@@ -10,6 +10,21 @@
 > **⚠ 实验性版本**：Windows 平台已实机测试，核心功能可用，性能和稳定性仍在优化中。
 
 ### 新增
+- **Linux 平台 Mock 测试**：新增 `test/mock-linux-ime-test.js`（70 个用例），覆盖 Fcitx5Manager、Fcitx4Manager、IBusManager 的完整行为
+  - 三种 IME 管理器的查询/切换命令验证
+  - 责任链降级测试（Fcitx5 → Fcitx4 → IBus → NullManager）
+  - 超时与异常安全测试（fcitx5-remote/fcitx-remote/ibus engine 超时不阻塞主线程）
+  - profile 文件边界情况（不存在、空文件、格式异常、自定义输入法列表）
+  - IMEStateManager 内部逻辑验证（500ms 阈值、手动覆盖、光标跟踪）
+  - D-Bus / dbus-next 容错验证
+  - 平台隔离验证（win32 守卫、FFI 懒加载、Linux 探测命令）
+- **环境检测脚本**：新增 `scripts/check-env.js`，自动检测本地 Linux 输入法环境
+  - 检测 Fcitx5/Fcitx4/IBus 安装状态和守护进程连通性
+  - 测试 fcitx5-remote、fcitx-remote、ibus 命令可用性
+  - 验证 D-Bus session daemon 连通性
+  - 解析 Fcitx5 profile 中已配置的输入法列表
+  - `npm run check-env` 可独立运行，`npm run compile`/`npm run watch` 前自动执行
+- **依赖锁文件**：`package-lock.json` 纳入版本控制（从 .gitignore 移除）
 - **koffi FFI 基础层**：用 koffi（Node.js FFI）直接调用 `user32.dll` / `imm32.dll` / `kernel32.dll`，替代 PowerShell 方案
 - **IMM32 兼容层**：通过 `ImmGetConversionStatus` / `ImmSetConversionStatus` 直接读写输入法中英文模式
 - **TSF 检测**：通过 koffi 调用 `ole32.dll` COM 函数检测 TSF 输入法（如微软拼音）

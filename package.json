@@ -66,8 +66,11 @@
     }
   },
   "scripts": {
+    "check-env": "node scripts/check-env.js",
     "postinstall": "node scripts/download-wasm.js",
+    "precompile": "node scripts/check-env.js",
     "compile": "node esbuild.js",
+    "prewatch": "node scripts/check-env.js",
     "watch": "node esbuild.js --watch"
   },
   "dependencies": {

@@ -42,8 +42,15 @@ auto-ime/
 ├── src/                    # 源代码
 │   ├── extension.ts        # 扩展入口，事件监听和生命周期管理
 │   ├── ASTAnalyzer.ts      # Tree-sitter AST 分析器
-│   └── IMEManager.ts       # 输入法管理器（Fcitx5/Fcitx4/IBus）
+│   ├── IMEManager.ts       # 输入法管理器（Fcitx5/Fcitx4/IBus/Windows）
+│   ├── IMEStateManager.ts  # 输入法状态监听
+│   └── win32/              # Windows FFI 层
+├── test/                   # 测试
+│   ├── mock-linux-ime-test.js  # Linux IME Mock 测试 (70 用例)
+│   ├── mock-koffi-test.js      # Windows IME Mock 测试 (26 用例)
+│   └── ast-analyzer-test.js    # AST 分析器测试
 ├── scripts/                # 辅助脚本
+│   ├── check-env.js        # 环境检测（输入法/D-Bus 连通性）
 │   ├── download-wasm.js    # postinstall: 下载 WASM 文件
 │   └── prepare-sandbox.js  # F5 前置: 准备测试沙盒
 ├── wasm/                   # Tree-sitter WASM 语言文件
@@ -73,9 +80,17 @@ Tree-sitter AST 分析器，负责：
 ### IMEManager.ts
 
 输入法管理器，负责：
-- 自动检测系统输入法框架
-- 通过 shell 命令切换输入法
-- 支持 Fcitx5、Fcitx4、IBus
+- 自动检测系统输入法框架（策略模式，`IIMEManager` 接口）
+- 通过 shell 命令切换输入法（Linux）或 koffi FFI / PowerShell（Windows）
+- 支持 Fcitx5、Fcitx4、IBus、Windows IMM32/TSF
+
+### IMEStateManager.ts
+
+输入法状态监听器，负责：
+- 监听用户手动切换输入法事件
+- 实现手动覆盖逻辑（暂停自动切换，光标移动到新行后恢复）
+- Linux: Fcitx5 轮询 / IBus D-Bus 信号监听
+- Windows: koffi FFI 轮询
 
 ## 开发规范
 
@@ -155,6 +170,31 @@ console.log(tree.rootNode.toString());
 
 ## 测试
 
+### 环境检测
+
+```bash
+npm run check-env
+```
+
+检测本地 Linux 输入法环境，验证 Fcitx5/Fcitx4/IBus 的安装状态和守护进程连通性。`compile` 和 `watch` 脚本执行前会自动运行。
+
+### Mock 测试
+
+```bash
+# Linux IME 测试（70 个用例）
+node test/mock-linux-ime-test.js
+
+# Windows IME 测试（26 个用例）
+node test/mock-koffi-test.js
+```
+
+Mock 测试通过拦截 `Module._load` 注入模拟的 `child_process`、`fs`、`dbus-next`、`vscode` 模块，在无真实输入法环境下验证：
+- 各 IME 管理器的查询/切换命令
+- 责任链降级（Fcitx5 → Fcitx4 → IBus → NullManager）
+- 超时与异常安全
+- profile 文件解析
+- bundle 编译产物完整性
+
 ### 手动测试
 
 1. 按 `F5` 启动调试
@@ -169,6 +209,7 @@ console.log(tree.rootNode.toString());
 查看 "Auto IME" 输出面板：
 - `[AST]`：AST 解析日志
 - `[IME]`：输入法切换日志
+- `[IMEState]`：输入法状态监听日志
 - `[Mode]`：模式切换日志
 
 ## 提交 Pull Request
