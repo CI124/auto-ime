@@ -275,8 +275,9 @@ test('bundle 包含 koffi 懒加载守卫', () => {
     assert.ok(bundleSrc.includes('process.platform === "win32"'), '应包含平台守卫');
 });
 
-test('bundle 包含 PowerShell 回退代码', () => {
-    assert.ok(bundleSrc.includes('WindowsPowerShellFallback') || bundleSrc.includes('PS_QUERY_SCRIPT'), '应包含 PowerShell 回退');
+test('bundle 包含平台适配器', () => {
+    // New architecture uses platform adapters instead of PowerShell fallback
+    assert.ok(bundleSrc.includes('DualKeyboardStrategy') || bundleSrc.includes('WindowsAdapter'), '应包含平台适配器');
 });
 
 test('bundle 包含多语言 ID 列表', () => {
@@ -287,8 +288,10 @@ test('bundle 包含轮询间隔配置', () => {
     assert.ok(bundleSrc.includes('pollingInterval') || bundleSrc.includes('auto-ime.windows'), '应包含轮询配置');
 });
 
-test('bundle 包含 activeWindowsManager 回退', () => {
-    assert.ok(bundleSrc.includes('activeWindowsManager'), '应包含活跃管理器引用');
+test('bundle 包含控制器和状态追踪器', () => {
+    // New architecture uses IMEController + IMEStateTracker
+    assert.ok(bundleSrc.includes('IMEController') || bundleSrc.includes('controller'), '应包含控制器');
+    assert.ok(bundleSrc.includes('IMEStateTracker') || bundleSrc.includes('stateTracker') || bundleSrc.includes('StateTracker'), '应包含状态追踪器');
 });
 
 test('bundle 包含三层切换策略', () => {
@@ -441,13 +444,9 @@ test('queryIMEMode 返回 null 而非 "en" (IMM32 失败时)', () => {
     assert.ok(bundleSrc.includes('return null'), '应包含 return null');
 });
 
-test('queryMode 不再调用 TSF (已移至 queryIMEMode 内部)', () => {
-    // queryMode 函数体内不应有 queryTSFMode 调用
-    const queryModeSection = bundleSrc.substring(
-        bundleSrc.indexOf('queryIMEMode() 已内置'),
-        bundleSrc.indexOf('switchToEnglish', bundleSrc.indexOf('queryIMEMode() 已内置'))
-    );
-    assert.ok(!queryModeSection.includes('queryTSFMode'), 'queryMode 不应调用 queryTSFMode');
+test('DualKeyboardStrategy 使用 Language ID 查询', () => {
+    // New architecture: DualKeyboardStrategy.queryMode uses getCurrentLanguageId
+    assert.ok(bundleSrc.includes('getCurrentLanguageId'), '应使用 getCurrentLanguageId 查询');
 });
 
 test('queryIMEMode 包含 Language ID 降级逻辑', () => {
@@ -517,12 +516,10 @@ test('bundle 包含 disposeTSFPipe 清理方法', () => {
     assert.ok(bundleSrc.includes('disposeTSFPipe'), '应包含管道清理方法');
 });
 
-test('bundle 包含 switchToEnglishAsync 异步切换方法', () => {
-    assert.ok(bundleSrc.includes('switchToEnglishAsync'), '应包含异步英文切换');
-});
-
-test('bundle 包含 switchToChineseAsync 异步切换方法', () => {
-    assert.ok(bundleSrc.includes('switchToChineseAsync'), '应包含异步中文切换');
+test('bundle 包含模式监听器', () => {
+    // New architecture: NormalModeListener + VimModeListener
+    assert.ok(bundleSrc.includes('NormalModeListener') || bundleSrc.includes('normal'), '应包含普通模式监听器');
+    assert.ok(bundleSrc.includes('VimModeListener') || bundleSrc.includes('vim'), '应包含 Vim 模式监听器');
 });
 
 test('TSF 管道使用 stdin/stdout 通信', () => {

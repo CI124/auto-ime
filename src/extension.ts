@@ -1,99 +1,86 @@
+/**
+ * Auto IME — VSCode Extension Entry Point
+ *
+ * Thin orchestration layer:
+ * 1. Create platform adapter (auto-detect Linux/Windows)
+ * 2. Create AST analyzer
+ * 3. Create state tracker
+ * 4. Create controller
+ * 5. Detect Vim mode → register appropriate mode listener
+ * 6. Wire up status bar, commands, window focus
+ */
+
 import * as vscode from 'vscode';
-import { createImeManager, IIMEManager } from './IMEManager';
 import { ASTAnalyzer } from './ASTAnalyzer';
-import { IMEStateManager } from './IMEStateManager';
 import { createLogger, LogSink } from './logger';
+import { IMEController } from './core/controller';
+import { IMEStateTracker } from './core/state-tracker';
+import { createPlatformAdapter } from './platforms';
+import { NormalModeListener } from './modes/normal';
+import { VimModeListener } from './modes/vim';
 
-let astAnalyzer: ASTAnalyzer;
-let analyzeDebounceTimer: NodeJS.Timeout | null = null;
-let analyzeGeneration = 0; // P0: generation counter to prevent double-trigger
-let modeDetectionTimer: NodeJS.Timeout | null = null;
 let outputChannel: vscode.OutputChannel;
-let statusBarItem: vscode.StatusBarItem;
-let imeManager: IIMEManager;
-let imeStateManager: IMEStateManager;
-let activeDisposables: vscode.Disposable[] = [];
 let logger: LogSink | null = null;
+let controller: IMEController | null = null;
+let stateTracker: IMEStateTracker | null = null;
+let activeDisposables: vscode.Disposable[] = [];
+let isVimMode = false;
 
-// 会话级标记：英语键盘缺失提示只显示一次
+// Session-level flag: only show English keyboard warning once
 let englishKeyboardWarningShown = false;
 
-// 当前输入法状态
-let currentIMEMode: 'en' | 'zh' = 'en';
-// 是否为 Vim 模式（支持延迟检测 Vim 扩展激活）
-let isVimMode = false;
-// 上一次的光标样式，用于检测 Insert -> Normal 模式切换（仅 Vim 模式）
-let lastCursorStyle: vscode.TextEditorCursorStyle | undefined;
-
 /**
- * 更新状态栏显示
+ * Verify Vim is active AND cursor is Block (bidirectional check)
  */
-function updateStatusBar(mode: 'en' | 'zh') {
-    currentIMEMode = mode;
-    if (mode === 'zh') {
-        statusBarItem.text = '$(keyboard) 中';
-        statusBarItem.tooltip = '当前: 中文输入法 (点击切换到英文)';
-        statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-    } else {
-        statusBarItem.text = '$(keyboard) EN';
-        statusBarItem.tooltip = '当前: 英文输入法 (点击切换到中文)';
-        statusBarItem.backgroundColor = undefined;
-    }
+function isVimVerified(): boolean {
+    const vimActive = !!vscode.extensions.getExtension('vscodevim.vim')?.isActive;
+    const editor = vscode.window.activeTextEditor;
+    const cursorIsBlock = editor?.options.cursorStyle === vscode.TextEditorCursorStyle.Block;
+    return vimActive && !!cursorIsBlock;
 }
 
 /**
- * 强制切换到英文（ESC 时调用）
- * 不检查 currentIMEMode — 语言 ID 可能显示 'en' 但 IME 内部仍是中文模式
+ * Switch to Vim mode listeners
  */
-function forceEnglish() {
-    const result = imeManager.switchToEnglish();
-    updateStatusBar('en');
-    logger.info(`[ESC] Forced switch to English (method: ${result.method})`);
-    // 重置手动覆盖模式
-    imeStateManager.resetManualOverride();
-}
+function switchToVimMode(ctx: vscode.ExtensionContext, controller: IMEController, logger: LogSink): void {
+    isVimMode = true;
+    controller.setVimMode(true);
+    controller.setInsertModeCheck((editor) =>
+        editor.options.cursorStyle === vscode.TextEditorCursorStyle.Line
+    );
+    logger.info('[Mode] Vim mode confirmed, switching listeners');
+    for (const d of activeDisposables) d.dispose();
 
-/**
- * 切换输入法状态（用户手动触发）
- */
-function toggleIME() {
-    if (currentIMEMode === 'zh') {
-        imeManager.switchToEnglish();
-        updateStatusBar('en');
-        logger.info('[StatusBar] User toggled to English');
-    } else {
-        imeManager.switchToChinese();
-        updateStatusBar('zh');
-        logger.info('[StatusBar] User toggled to Chinese');
-    }
-    // 立即阻止自动分析，避免 10ms debounce 后覆盖用户操作
-    imeStateManager.markManualSwitch();
+    const vimListener = new VimModeListener(logger);
+    activeDisposables = vimListener.register({
+        analyzeAndSwitch: (editor) => controller.analyzeAndSwitch(editor),
+        forceEnglish: () => controller.forceEnglish(),
+        toggleIME: () => controller.toggleIME(),
+        updateStatusBar: (mode) => controller.updateStatusBar(mode),
+        logger,
+    });
+    ctx.subscriptions.push(...activeDisposables);
 }
 
 export async function activate(context: vscode.ExtensionContext) {
     try {
-    // 引入扩展专属输出通道
+    // ========== Output Channel ==========
     outputChannel = vscode.window.createOutputChannel("Auto IME");
     context.subscriptions.push(outputChannel);
 
-    // 创建日志文件（扩展存储目录/auto-ime.log）
+    // ========== Logger ==========
     const logDir = context.globalStorageUri.fsPath;
     const logFilePath = require('path').join(logDir, 'auto-ime.log');
     try { require('fs').mkdirSync(logDir, { recursive: true }); } catch {}
-    // 清空旧日志
     try { require('fs').writeFileSync(logFilePath, '', 'utf-8'); } catch {}
-
-    // 创建统一 Logger
     logger = createLogger('Extension', outputChannel, logFilePath);
-
     logger.info('Extension auto-ime is now active!');
 
-    // 初始化 IME 管理器并输出检测日志
-    imeManager = createImeManager(outputChannel, logFilePath);
+    // ========== Platform Adapter ==========
+    const adapter = createPlatformAdapter(logger);
 
-    // Windows: 检查英语键盘是否就绪，未就绪时提示用户
-    if (process.platform === 'win32' && !englishKeyboardWarningShown &&
-        'isReady' in imeManager && !(imeManager as any).isReady()) {
+    // Windows: check English keyboard
+    if (process.platform === 'win32' && !englishKeyboardWarningShown && !adapter.isReady()) {
         englishKeyboardWarningShown = true;
         logger.warn('English keyboard layout not found, showing user guidance');
         vscode.window.showInformationMessage(
@@ -106,342 +93,78 @@ export async function activate(context: vscode.ExtensionContext) {
         });
     }
 
-    // 初始化 IME 状态管理器（监听用户手动切换）
-    imeStateManager = new IMEStateManager(logger);
-    await imeStateManager.startListening();
-
-    // 监听手动切换，同步更新状态栏
-    imeStateManager.setOnChangeCallback((newIME: string) => {
-        const isEnglish = newIME.includes('keyboard') || newIME.includes('xkb') || newIME.includes('eng');
-        updateStatusBar(isEnglish ? 'en' : 'zh');
+    // ========== State Tracker ==========
+    stateTracker = new IMEStateTracker(adapter, logger);
+    stateTracker.setOnChangeCallback((newIME: string) => {
+        const isEnglish = newIME === 'en';
+        controller?.updateStatusBar(isEnglish ? 'en' : 'zh');
         logger.info(`[StatusBar] Manual switch sync: ${newIME} → ${isEnglish ? 'EN' : 'ZH'}`);
     });
+    stateTracker.startListening(
+        process.platform === 'win32'
+            ? (vscode.workspace.getConfiguration('auto-ime.windows').get<number>('pollingInterval') || 150)
+            : undefined
+    );
 
-    // ==========================================
-    // 状态栏：显示当前输入法状态
-    // ==========================================
-    statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    // ========== Status Bar ==========
+    const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     statusBarItem.command = 'auto-ime.toggleIME';
-    updateStatusBar('en');
-    statusBarItem.show();
     context.subscriptions.push(statusBarItem);
 
-    // 注册状态栏点击切换命令
+    // ========== AST Analyzer ==========
+    const astLogger = createLogger('ASTAnalyzer', outputChannel, logFilePath);
+    const analyzer = new ASTAnalyzer(context, outputChannel, astLogger);
+    await analyzer.init();
+    logger.info('AST Analyzer initialized.');
+
+    // ========== Controller ==========
+    controller = new IMEController(adapter, analyzer, stateTracker, statusBarItem, logger);
+    controller.updateStatusBar('en');
+
+    // Register toggle command
     const toggleCommand = vscode.commands.registerCommand('auto-ime.toggleIME', () => {
-        toggleIME();
+        controller?.toggleIME();
     });
     context.subscriptions.push(toggleCommand);
 
-    // 初始化 AST 分析器
-    const astLogger = createLogger('ASTAnalyzer', outputChannel, logFilePath);
-    astAnalyzer = new ASTAnalyzer(context, outputChannel, astLogger);
-    await astAnalyzer.init();
-    logger.info('AST Analyzer initialized.');
-
-    // 核心分析函数：检测光标上下文并切换输入法
-    async function analyzeAndSwitch(editor: vscode.TextEditor) {
-        const document = editor.document;
-
-        // P1: skip non-code documents (output panels, diff views, etc.)
-        const scheme = document.uri.scheme;
-        if (scheme !== 'file' && scheme !== 'untitled') {
-            return;
-        }
-
-        const position = editor.selections[0].active;
-        const cursor = `L${position.line + 1}:${position.character}`;
-        const lang = document.languageId;
-        const vimMode = isVimMode ? (isInInsertMode(editor) ? 'I' : 'N') : '-';
-
-        // 手动覆盖模式：光标移动到不同行时恢复自动分析
-        if (imeStateManager.isManualOverride()) {
-            if (imeStateManager.isDifferentPosition(position.line)) {
-                logger.info(`[${cursor}] ${lang} vim=${vimMode} → manual override resume`);
-                imeStateManager.resetManualOverride();
-            } else {
-                return; // 同行不输出日志
-            }
-        }
-
-        imeStateManager.updatePosition(position.line, position.character);
-
-        // 快速路径：基于文本的注释检测（同步，无 AST 开销）
-        const fastResult = astAnalyzer.isCursorInCommentFast(document, position, lang);
-        if (fastResult === true) {
-            if (currentIMEMode !== 'zh') {
-                logger.info(`[${cursor}] ${lang} vim=${vimMode} → comment (fast) → switch to ZH`);
-                updateStatusBar('zh'); // Optimistic update to prevent re-trigger
-                imeStateManager.markAutoSwitch();
-                if (imeManager.switchToChineseAsync) {
-                    await imeManager.switchToChineseAsync();
-                } else {
-                    imeManager.switchToChinese();
-                }
-            }
-            return;
-        }
-
-        // 完整 AST 分析
-        const astResult = await astAnalyzer.isCursorInCommentOrString(document, position);
-
-        if (astResult.match) {
-            // 方案 A: 只在注释中自动切换中文，字符串不干预
-            if (astResult.type === 'string') {
-                return; // 字符串中保持当前输入法状态
-            }
-            // 注释 → 切中文
-            if (currentIMEMode !== 'zh') {
-                logger.info(`[${cursor}] ${lang} vim=${vimMode} → comment → switch to ZH`);
-                updateStatusBar('zh'); // Optimistic update
-                imeStateManager.markAutoSwitch();
-                if (imeManager.switchToChineseAsync) {
-                    await imeManager.switchToChineseAsync();
-                } else {
-                    imeManager.switchToChinese();
-                }
-            }
-        } else {
-            if (currentIMEMode !== 'en') {
-                logger.info(`[${cursor}] ${lang} vim=${vimMode} → code → switch to EN`);
-                updateStatusBar('en'); // Optimistic update
-                imeStateManager.markAutoSwitch();
-                if (imeManager.switchToEnglishAsync) {
-                    await imeManager.switchToEnglishAsync();
-                } else {
-                    imeManager.switchToEnglish();
-                }
-            }
-        }
-    }
-
-    // 检查是否在 Insert 模式（仅 Vim 模式有意义）
-    function isInInsertMode(editor: vscode.TextEditor): boolean {
-        return editor.options.cursorStyle === vscode.TextEditorCursorStyle.Line;
-    }
-
-    // 统一分析调度（动态防抖: 根据文件大小调整延迟）
-    // P0: generation counter prevents double-trigger from selection + document events
-    function scheduleAnalyze() {
-        if (analyzeDebounceTimer) {
-            clearTimeout(analyzeDebounceTimer);
-        }
-        const gen = ++analyzeGeneration;
-        const editor = vscode.window.activeTextEditor;
-        const lineCount = editor?.document.lineCount ?? 0;
-        // 小文件 (<500行): 10ms | 中文件 (500-5000行): 30ms | 大文件 (>5000行): 60ms
-        const delay = lineCount > 5000 ? 60 : lineCount > 500 ? 30 : 10;
-        analyzeDebounceTimer = setTimeout(() => {
-            if (!editor) return;
-            if (isVimMode && !isInInsertMode(editor)) return;
-            // P0: skip if a newer scheduleAnalyze call was made
-            if (gen !== analyzeGeneration) return;
-            analyzeAndSwitch(editor);
-        }, delay);
-    }
-
-    // ==========================================
-    // 注册模式专属监听器
-    // ==========================================
-
-    function registerNormalListeners(): vscode.Disposable[] {
-        const disposables: vscode.Disposable[] = [];
-
-        const selectionChange = vscode.window.onDidChangeTextEditorSelection((e) => {
-            if (!e.textEditor.document) return;
-
-            // 检测光标变为 Block → 可能是 Vim 延迟加载，双向验证
-            if (!isVimMode &&
-                e.textEditor.options.cursorStyle === vscode.TextEditorCursorStyle.Block) {
-                if (isVimVerified()) {
-                    switchToVimMode();
-                    return;
-                }
-            }
-
-            scheduleAnalyze();
-        });
-        disposables.push(selectionChange);
-
-        const documentChange = vscode.workspace.onDidChangeTextDocument((e) => {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor || editor.document !== e.document) return;
-            scheduleAnalyze();
-        });
-        disposables.push(documentChange);
-
-        // 监听光标样式变化（比轮询更精确）
-        const optionsChange = vscode.window.onDidChangeTextEditorOptions((e) => {
-            if (!isVimMode &&
-                e.textEditor.options.cursorStyle === vscode.TextEditorCursorStyle.Block) {
-                if (isVimVerified()) {
-                    switchToVimMode();
-                    return;
-                }
-            }
-            scheduleAnalyze();
-        });
-        disposables.push(optionsChange);
-
-        return disposables;
-    }
-
-    function registerVimListeners(): vscode.Disposable[] {
-        const disposables: vscode.Disposable[] = [];
-
-        // ESC 劫持：退回 Normal 模式的同时强制切换英文
-        const escapeCommand = vscode.commands.registerCommand('auto-ime.escape', () => {
-            forceEnglish();
-            vscode.commands.executeCommand('extension.vim_escape');
-        });
-        disposables.push(escapeCommand);
-
-        // 光标样式轮询：检测 Normal → Insert 模式切换
-        function checkModeChange() {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor) return;
-            // 不依赖 lastCursorStyle，直接检测当前是否为 Insert 模式（Line 光标）
-            if (editor.options.cursorStyle === vscode.TextEditorCursorStyle.Line) {
-                stopModeDetection();
-                lastCursorStyle = editor.options.cursorStyle;
-                analyzeAndSwitch(editor);
-            }
-        }
-
-        function startModeDetection() {
-            if (modeDetectionTimer) return;
-            checkModeChange();
-            modeDetectionTimer = setInterval(checkModeChange, 20);
-        }
-
-        function stopModeDetection() {
-            if (modeDetectionTimer) {
-                clearInterval(modeDetectionTimer);
-                modeDetectionTimer = null;
-            }
-        }
-
-        // 初始化 lastCursorStyle
-        const activeEditor = vscode.window.activeTextEditor;
-        if (activeEditor) {
-            lastCursorStyle = activeEditor.options.cursorStyle;
-            if (lastCursorStyle !== vscode.TextEditorCursorStyle.Line) {
-                startModeDetection();
-            }
-        }
-
-        // 监听编辑器切换
-        const editorChange = vscode.window.onDidChangeActiveTextEditor((editor) => {
-            if (editor) {
-                lastCursorStyle = editor.options.cursorStyle;
-                if (lastCursorStyle !== vscode.TextEditorCursorStyle.Line) {
-                    startModeDetection();
-                } else {
-                    stopModeDetection();
-                }
-            }
-        });
-        disposables.push(editorChange);
-
-        // 光标/选择变化：Vim 模式专属逻辑
-        const selectionChange = vscode.window.onDidChangeTextEditorSelection((e) => {
-            if (!e.textEditor.document) return;
-
-            const currentCursorStyle = e.textEditor.options.cursorStyle;
-
-            // 检测 Insert -> Normal 模式切换
-            if (lastCursorStyle === vscode.TextEditorCursorStyle.Line &&
-                currentCursorStyle === vscode.TextEditorCursorStyle.Block) {
-                forceEnglish();
-                startModeDetection();
-            }
-            lastCursorStyle = currentCursorStyle;
-
-            // 只在 Insert 模式下分析
-            if (!isInInsertMode(e.textEditor)) return;
-            stopModeDetection();
-            scheduleAnalyze();
-        });
-        disposables.push(selectionChange);
-
-        // 文档变化：Vim 模式仅 Insert 模式下分析
-        const documentChange = vscode.workspace.onDidChangeTextDocument((e) => {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor || editor.document !== e.document) return;
-            if (!isInInsertMode(editor)) return;
-            scheduleAnalyze();
-        });
-        disposables.push(documentChange);
-
-        // 监听光标样式变化：精确检测 Normal → Insert 切换（替代轮询）
-        const optionsChange = vscode.window.onDidChangeTextEditorOptions((e) => {
-            const currentCursor = e.textEditor.options.cursorStyle;
-            if (lastCursorStyle === vscode.TextEditorCursorStyle.Block &&
-                currentCursor === vscode.TextEditorCursorStyle.Line) {
-                // Normal → Insert
-                stopModeDetection();
-                lastCursorStyle = currentCursor;
-                analyzeAndSwitch(e.textEditor);
-            } else if (lastCursorStyle === vscode.TextEditorCursorStyle.Line &&
-                       currentCursor === vscode.TextEditorCursorStyle.Block) {
-                // Insert → Normal
-                forceEnglish();
-                startModeDetection();
-                lastCursorStyle = currentCursor;
-            }
-        });
-        disposables.push(optionsChange);
-
-        return disposables;
-    }
-
-    // 双向验证：isActive + 光标为 Block
-    function isVimVerified(): boolean {
-        const vimActive = !!vscode.extensions.getExtension('vscodevim.vim')?.isActive;
-        const editor = vscode.window.activeTextEditor;
-        const cursorIsBlock = editor?.options.cursorStyle === vscode.TextEditorCursorStyle.Block;
-        return vimActive && !!cursorIsBlock;
-    }
-
-    function switchToVimMode() {
-        isVimMode = true;
-        logger.info('[Mode] Vim mode confirmed, switching listeners');
-        for (const d of activeDisposables) d.dispose();
-        activeDisposables = registerVimListeners();
-    }
-
-    // 初始检测：isActive + 光标样式双向验证
+    // ========== Mode Detection ==========
     if (isVimVerified()) {
         isVimMode = true;
         logger.info('[Mode] Initial detection: Vim mode (verified)');
-        activeDisposables = registerVimListeners();
+        switchToVimMode(context, controller, logger);
     } else {
         logger.info('[Mode] Initial detection: Normal mode');
-        activeDisposables = registerNormalListeners();
+        const normalListener = new NormalModeListener();
+        activeDisposables = normalListener.register({
+            analyzeAndSwitch: (editor) => controller!.analyzeAndSwitch(editor),
+            forceEnglish: () => controller!.forceEnglish(),
+            toggleIME: () => controller!.toggleIME(),
+            updateStatusBar: (mode) => controller!.updateStatusBar(mode),
+            logger,
+        });
+        context.subscriptions.push(...activeDisposables);
 
-        // 兜底：2 秒后再次检测（Vim 可能延迟加载）
+        // Retry Vim detection after 2s (Vim may load late)
         setTimeout(() => {
             if (isVimMode) return;
             if (isVimVerified()) {
-                switchToVimMode();
+                switchToVimMode(context, controller!, logger!);
             }
         }, 2000);
     }
 
     logger.info(`[Mode] ${isVimMode ? 'Vim' : 'Normal'} mode listeners registered. Extension is ready.`);
 
-    // 窗口焦点恢复时重新查询输入法状态
+    // ========== Window Focus Sync ==========
     const windowStateChange = vscode.window.onDidChangeWindowState((e) => {
         if (e.focused) {
-            // Sync internal layout state with system (user may have manually switched)
-            if ('syncLayout' in imeManager) {
-                (imeManager as any).syncLayout();
-            }
-            const mode = imeManager.queryCurrentMode();
-            if (mode && mode !== currentIMEMode) {
-                logger.info(`[Focus] IME state changed externally: ${currentIMEMode} → ${mode}`);
-                updateStatusBar(mode);
+            stateTracker?.syncState();
+            const mode = controller?.queryCurrentMode();
+            if (mode && controller && mode !== controller.getCurrentMode()) {
+                logger.info(`[Focus] IME state changed externally: ${controller.getCurrentMode()} → ${mode}`);
+                controller.updateStatusBar(mode);
             } else {
-                logger.debug(`[Focus] Window focused, IME unchanged: ${currentIMEMode}`);
+                logger.debug(`[Focus] Window focused, IME unchanged: ${controller?.getCurrentMode()}`);
             }
         }
     });
@@ -452,7 +175,6 @@ export async function activate(context: vscode.ExtensionContext) {
         if (logger) {
             logger.error(`[FATAL] ${msg}`);
         } else {
-            // logger 尚未初始化，直接写入 outputChannel
             outputChannel?.appendLine(`[FATAL] ${msg}`);
         }
     }
@@ -460,18 +182,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {
     logger?.info('Extension auto-ime deactivated');
-    if (analyzeDebounceTimer) {
-        clearTimeout(analyzeDebounceTimer);
-    }
-    if (modeDetectionTimer) {
-        clearInterval(modeDetectionTimer);
-    }
     for (const d of activeDisposables) d.dispose();
     activeDisposables = [];
-    if (imeStateManager) {
-        imeStateManager.stopListening();
-    }
-    if (astAnalyzer) {
-        astAnalyzer.dispose();
-    }
+    stateTracker?.stopListening();
 }
