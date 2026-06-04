@@ -7,7 +7,6 @@ import { createLogger, LogSink } from './logger';
 let astAnalyzer: ASTAnalyzer;
 let analyzeDebounceTimer: NodeJS.Timeout | null = null;
 let analyzeGeneration = 0; // P0: generation counter to prevent double-trigger
-let lastForceEnglishTime = 0; // Bug2: suppress re-analysis after ESC
 let modeDetectionTimer: NodeJS.Timeout | null = null;
 let outputChannel: vscode.OutputChannel;
 let statusBarItem: vscode.StatusBarItem;
@@ -44,14 +43,12 @@ function updateStatusBar(mode: 'en' | 'zh') {
 
 /**
  * 强制切换到英文（ESC 时调用）
+ * 不检查 currentIMEMode — 语言 ID 可能显示 'en' 但 IME 内部仍是中文模式
  */
 function forceEnglish() {
-    lastForceEnglishTime = Date.now(); // Bug2: suppress re-analysis
-    if (currentIMEMode !== 'en') {
-        imeManager.switchToEnglish();
-        updateStatusBar('en');
-        logger.info('[ESC] Forced switch to English');
-    }
+    const result = imeManager.switchToEnglish();
+    updateStatusBar('en');
+    logger.info(`[ESC] Forced switch to English (method: ${result.method})`);
     // 重置手动覆盖模式
     imeStateManager.resetManualOverride();
 }
@@ -238,8 +235,6 @@ export async function activate(context: vscode.ExtensionContext) {
             if (isVimMode && !isInInsertMode(editor)) return;
             // P0: skip if a newer scheduleAnalyze call was made
             if (gen !== analyzeGeneration) return;
-            // Bug2: skip if within 300ms of ESC (prevent immediate re-analysis)
-            if (Date.now() - lastForceEnglishTime < 300) return;
             analyzeAndSwitch(editor);
         }, delay);
     }
