@@ -2,6 +2,12 @@
  * IME State Tracker
  * Tracks current IME mode, detects manual vs auto switches, manages override state
  * Platform-agnostic: uses IPlatformAdapter for actual state queries
+ *
+ * Performance optimization (v0.6.1):
+ * - Polling interval increased to 500ms (from 150ms) since adapter uses internal state
+ * - notifyAutoSwitch() updates currentIME immediately after auto-switch
+ * - syncState() calls adapter.syncState() to refresh from system on window focus
+ * - Poll only detects external manual switches (user pressing system hotkeys)
  */
 
 import { IPlatformAdapter } from './types';
@@ -18,7 +24,7 @@ export class IMEStateTracker {
     private lastPositionChar = -1;
     private pollingTimer: NodeJS.Timeout | null = null;
     private onChangeCallback: ((newIME: string) => void) | null = null;
-    private pollingInterval = 150;
+    private pollingInterval = 500; // Increased from 150ms — poll is only for external manual switches
 
     constructor(adapter: IPlatformAdapter, logger: LogSink) {
         this.adapter = adapter;
@@ -67,6 +73,16 @@ export class IMEStateTracker {
     }
 
     /**
+     * Notify that an auto-switch was successful
+     * Updates currentIME immediately to prevent poll from re-detecting
+     */
+    notifyAutoSwitch(mode: 'zh' | 'en'): void {
+        if (this.currentIME !== mode) {
+            this.currentIME = mode;
+        }
+    }
+
+    /**
      * Is in manual override mode
      */
     isManualOverride(): boolean {
@@ -111,6 +127,7 @@ export class IMEStateTracker {
 
     /**
      * Sync state with system (call on window focus)
+     * Refreshes adapter's internal state from actual system state
      */
     syncState(): void {
         if (this.adapter.syncState) {
@@ -127,7 +144,7 @@ export class IMEStateTracker {
 
     private startPolling(): void {
         this.pollingTimer = setInterval(() => {
-            // Skip FFI query during suppress window
+            // Skip query during suppress window
             if (Date.now() < this.autoSwitchSuppressUntil) return;
 
             const newIME = this.adapter.queryMode();
@@ -145,7 +162,7 @@ export class IMEStateTracker {
 
         // Within suppress window → auto switch, don't trigger manual logic
         if (now < this.autoSwitchSuppressUntil) {
-            this.currentIME = newIME; // Update state to prevent re-detection
+            this.currentIME = newIME;
             const elapsed = now - this.lastAutoSwitchTime;
             this.logger.info(`[StateTracker] Auto switch: ${oldIME} → ${newIME} (${elapsed}ms)`);
             return;

@@ -8,6 +8,12 @@
  * - IBus: exact match against configured engine name
  * - PATH: ensures /usr/local/bin, /usr/bin, /bin are available
  * - Detection: uses bash -c "command -v ..." for reliable detection
+ *
+ * Performance optimization (v0.6.1):
+ * - queryMode() uses internal state tracking instead of execSync calls
+ * - switchToXxx() skips execution when already in target state
+ * - syncFromSystem() queries actual system state (called on window focus)
+ * - This eliminates per-keystroke subprocess calls that caused editor lag
  */
 
 import { execFileSync } from 'child_process';
@@ -156,6 +162,16 @@ export class LinuxAdapter implements IPlatformAdapter {
         return this.manager.switchToChinese();
     }
 
+    /**
+     * Sync internal state with actual system state
+     * Called on window focus restore to detect external manual switches
+     */
+    syncState(): void {
+        if (this.manager && 'syncFromSystem' in this.manager) {
+            (this.manager as any).syncFromSystem();
+        }
+    }
+
     dispose(): void {
         // nothing to clean up
     }
@@ -190,9 +206,10 @@ interface LinuxIMEManager {
     queryMode(): 'zh' | 'en';
     switchToEnglish(): SwitchResult;
     switchToChinese(): SwitchResult;
+    syncFromSystem?(): void;
 }
 
-// ========== Fcitx5 Manager (v0.5.0 logic: profile reading + exact match) ==========
+// ========== Fcitx5 Manager (v0.5.0 logic + internal state tracking) ==========
 
 const FCITX5_SWITCH_SCRIPT = `fcitx5-remote -s "$1"`;
 
@@ -201,6 +218,7 @@ class Fcitx5Manager implements LinuxIMEManager {
     private envPath: string;
     private englishTarget: string;
     private chineseTarget: string;
+    private currentTarget: string; // Internal state tracking
 
     constructor(logger: LogSink, envPath: string) {
         this.logger = logger;
@@ -208,28 +226,59 @@ class Fcitx5Manager implements LinuxIMEManager {
         const targets = readFcitx5Profile(logger);
         this.englishTarget = targets.english;
         this.chineseTarget = targets.chinese;
+        // Initialize internal state from system
+        this.currentTarget = this.queryFromSystem();
+        logger.info(`[Fcitx5] Initial state: ${this.currentTarget === this.englishTarget ? 'en' : 'zh'}`);
     }
 
+    /**
+     * Query mode using internal state (no subprocess call)
+     */
     queryMode(): 'zh' | 'en' {
-        const result = this.runBash('fcitx5-remote -n', [], 'fcitx5-remote -n');
-        if (!result) return 'en';
-        return result === this.englishTarget ? 'en' : 'zh';
+        return this.currentTarget === this.englishTarget ? 'en' : 'zh';
     }
 
     switchToEnglish(): SwitchResult {
+        if (this.currentTarget === this.englishTarget) {
+            return { success: true, method: 'skip' };
+        }
+        this.currentTarget = this.englishTarget;
         this.runBash(FCITX5_SWITCH_SCRIPT, [this.englishTarget], `fcitx5-remote -s ${this.englishTarget}`);
         return { success: true, method: 'fcitx5' };
     }
 
     switchToChinese(): SwitchResult {
+        if (this.currentTarget === this.chineseTarget) {
+            return { success: true, method: 'skip' };
+        }
+        this.currentTarget = this.chineseTarget;
         this.runBash(FCITX5_SWITCH_SCRIPT, [this.chineseTarget], `fcitx5-remote -s ${this.chineseTarget}`);
         return { success: true, method: 'fcitx5' };
     }
 
+    /**
+     * Sync internal state with actual system state (subprocess call)
+     * Called on window focus restore to detect external manual switches
+     */
+    syncFromSystem(): void {
+        const systemTarget = this.queryFromSystem();
+        if (systemTarget !== this.currentTarget) {
+            this.logger.info(`[Fcitx5] Sync: ${this.currentTarget} → ${systemTarget}`);
+            this.currentTarget = systemTarget;
+        }
+    }
+
+    /**
+     * Query actual system state via subprocess (only called during init and sync)
+     */
+    private queryFromSystem(): string {
+        const result = this.runBash('fcitx5-remote -n', [], 'fcitx5-remote -n');
+        return result || this.englishTarget;
+    }
+
     private runBash(script: string, args: string[], label: string): string {
         try {
-            const result = runBash(script, args, this.envPath, 1000);
-            return result;
+            return runBash(script, args, this.envPath, 1000);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             this.logger.error(`[Fcitx5] ${label} failed: ${message}`);
@@ -238,34 +287,57 @@ class Fcitx5Manager implements LinuxIMEManager {
     }
 }
 
-// ========== Fcitx4 Manager (v0.5.0 logic: exit code based query) ==========
+// ========== Fcitx4 Manager (v0.5.0 logic + internal state tracking) ==========
 
 const FCITX4_SWITCH_SCRIPT = `timeout 5 fcitx-remote "$1" &> /dev/null`;
 
 class Fcitx4Manager implements LinuxIMEManager {
     private logger: LogSink;
     private envPath: string;
+    private currentMode: 'zh' | 'en'; // Internal state tracking
 
     constructor(logger: LogSink, envPath: string) {
         this.logger = logger;
         this.envPath = envPath;
+        // Initialize internal state from system
+        this.currentMode = this.queryFromSystem();
+        logger.info(`[Fcitx4] Initial state: ${this.currentMode}`);
     }
 
     queryMode(): 'zh' | 'en' {
-        // fcitx-remote exit code: 1=inactive(English), 2=active(Chinese)
-        const result = this.runBash('fcitx-remote 2>/dev/null; echo $?', [], 'fcitx-remote query');
-        const code = parseInt(result.trim(), 10);
-        return code === 2 ? 'zh' : 'en';
+        return this.currentMode;
     }
 
     switchToEnglish(): SwitchResult {
+        if (this.currentMode === 'en') {
+            return { success: true, method: 'skip' };
+        }
+        this.currentMode = 'en';
         this.runBash(FCITX4_SWITCH_SCRIPT, ['-c'], 'fcitx-remote -c');
         return { success: true, method: 'fcitx4' };
     }
 
     switchToChinese(): SwitchResult {
+        if (this.currentMode === 'zh') {
+            return { success: true, method: 'skip' };
+        }
+        this.currentMode = 'zh';
         this.runBash(FCITX4_SWITCH_SCRIPT, ['-o'], 'fcitx-remote -o');
         return { success: true, method: 'fcitx4' };
+    }
+
+    syncFromSystem(): void {
+        const systemMode = this.queryFromSystem();
+        if (systemMode !== this.currentMode) {
+            this.logger.info(`[Fcitx4] Sync: ${this.currentMode} → ${systemMode}`);
+            this.currentMode = systemMode;
+        }
+    }
+
+    private queryFromSystem(): 'zh' | 'en' {
+        const result = this.runBash('fcitx-remote 2>/dev/null; echo $?', [], 'fcitx-remote query');
+        const code = parseInt(result.trim(), 10);
+        return code === 2 ? 'zh' : 'en';
     }
 
     private runBash(script: string, args: string[], label: string): string {
@@ -279,39 +351,62 @@ class Fcitx4Manager implements LinuxIMEManager {
     }
 }
 
-// ========== IBus Manager (v0.5.0 logic: exact match against configured engine) ==========
+// ========== IBus Manager (v0.5.0 logic + internal state tracking) ==========
 
 const IBUS_ENGINE_SCRIPT = `ibus engine "$1" &> /dev/null`;
 
 class IBusManager implements LinuxIMEManager {
     private logger: LogSink;
     private envPath: string;
+    private currentMode: 'zh' | 'en'; // Internal state tracking
+    private englishEngine: string;
+    private chineseEngine: string;
 
     constructor(logger: LogSink, envPath: string) {
         this.logger = logger;
         this.envPath = envPath;
+        const config = vscode.workspace.getConfiguration('auto-ime.ibus');
+        this.englishEngine = config.get<string>('englishEngine') || 'xkb:us::eng';
+        this.chineseEngine = config.get<string>('chineseEngine') || 'libpinyin';
+        // Initialize internal state from system
+        this.currentMode = this.queryFromSystem();
+        logger.info(`[IBus] Initial state: ${this.currentMode}`);
     }
 
     queryMode(): 'zh' | 'en' {
-        const result = this.runBash('ibus engine', [], 'ibus engine query');
-        if (!result) return 'en'; // empty result means ibus not running or no engine
-        const config = vscode.workspace.getConfiguration('auto-ime.ibus');
-        const engEngine = config.get<string>('englishEngine') || 'xkb:us::eng';
-        return result === engEngine ? 'en' : 'zh';
+        return this.currentMode;
     }
 
     switchToEnglish(): SwitchResult {
-        const config = vscode.workspace.getConfiguration('auto-ime.ibus');
-        const engEngine = config.get<string>('englishEngine') || 'xkb:us::eng';
-        this.runBash(IBUS_ENGINE_SCRIPT, [engEngine], `ibus engine ${engEngine}`);
+        if (this.currentMode === 'en') {
+            return { success: true, method: 'skip' };
+        }
+        this.currentMode = 'en';
+        this.runBash(IBUS_ENGINE_SCRIPT, [this.englishEngine], `ibus engine ${this.englishEngine}`);
         return { success: true, method: 'ibus' };
     }
 
     switchToChinese(): SwitchResult {
-        const config = vscode.workspace.getConfiguration('auto-ime.ibus');
-        const zhEngine = config.get<string>('chineseEngine') || 'libpinyin';
-        this.runBash(IBUS_ENGINE_SCRIPT, [zhEngine], `ibus engine ${zhEngine}`);
+        if (this.currentMode === 'zh') {
+            return { success: true, method: 'skip' };
+        }
+        this.currentMode = 'zh';
+        this.runBash(IBUS_ENGINE_SCRIPT, [this.chineseEngine], `ibus engine ${this.chineseEngine}`);
         return { success: true, method: 'ibus' };
+    }
+
+    syncFromSystem(): void {
+        const systemMode = this.queryFromSystem();
+        if (systemMode !== this.currentMode) {
+            this.logger.info(`[IBus] Sync: ${this.currentMode} → ${systemMode}`);
+            this.currentMode = systemMode;
+        }
+    }
+
+    private queryFromSystem(): 'zh' | 'en' {
+        const result = this.runBash('ibus engine', [], 'ibus engine query');
+        if (!result) return 'en';
+        return result === this.englishEngine ? 'en' : 'zh';
     }
 
     private runBash(script: string, args: string[], label: string): string {

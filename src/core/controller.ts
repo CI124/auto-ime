@@ -134,6 +134,7 @@ export class IMEController {
     forceEnglish(): void {
         const result = this.adapter.switchToEnglish();
         this.updateStatusBar('en');
+        this.stateTracker.notifyAutoSwitch('en'); // Sync state tracker immediately
         this.logger.info(`[ESC] Forced switch to English (method: ${result.method})`);
         this.stateTracker.resetManualOverride();
     }
@@ -145,10 +146,12 @@ export class IMEController {
         if (this.currentMode === 'zh') {
             this.adapter.switchToEnglish();
             this.updateStatusBar('en');
+            this.stateTracker.notifyAutoSwitch('en');
             this.logger.info('[StatusBar] User toggled to English');
         } else {
             this.adapter.switchToChinese();
             this.updateStatusBar('zh');
+            this.stateTracker.notifyAutoSwitch('zh');
             this.logger.info('[StatusBar] User toggled to Chinese');
         }
         this.stateTracker.markManualSwitch();
@@ -166,6 +169,7 @@ export class IMEController {
     private switchTo(mode: 'zh' | 'en'): void {
         this.updateStatusBar(mode); // Optimistic update
         this.stateTracker.markAutoSwitch();
+        this.stateTracker.notifyAutoSwitch(mode); // Update state tracker immediately
 
         let result: SwitchResult;
         if (mode === 'zh') {
