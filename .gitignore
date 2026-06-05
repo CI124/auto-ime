@@ -17,7 +17,6 @@
 !tsconfig.json
 !esbuild.js
 !.gitignore
-!.vscodeignore
 
 # ========================================
 # Whitelist: documentation
@@ -37,19 +36,6 @@
 !test/**
 
 # ========================================
-# Whitelist: docs
-# ========================================
-!docs/
-!docs/**
-
-# ========================================
 # Whitelist: assets
 # ========================================
 !icon.png
-
-# ========================================
-# Whitelist: VS Code workspace configs
-# ========================================
-!.vscode/
-!.vscode/launch.json
-!.vscode/tasks.json
