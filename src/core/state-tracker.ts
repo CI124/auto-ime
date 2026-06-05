@@ -1,13 +1,15 @@
 /**
  * IME State Tracker
  * Tracks current IME mode, detects manual vs auto switches, manages override state
- * Platform-agnostic: uses IPlatformAdapter for actual state queries
  *
- * Performance optimization (v0.6.1):
- * - Polling interval increased to 500ms (from 150ms) since adapter uses internal state
- * - notifyAutoSwitch() updates currentIME immediately after auto-switch
- * - syncState() calls adapter.syncState() to refresh from system on window focus
- * - Poll only detects external manual switches (user pressing system hotkeys)
+ * Event-driven architecture:
+ * - Linux: D-Bus signals (Fcitx5 InputMethodChanged / IBus GlobalEngineChanged)
+ * - Windows: polling (no D-Bus available)
+ *
+ * No suppress window needed:
+ * - controller.switchTo() updates adapter internal state BEFORE notifyAutoSwitch()
+ * - poll/adapter.queryMode() and currentIME are always in sync
+ * - only external switches (system tray) cause detectable changes
  */
 
 import { IPlatformAdapter } from './types';
@@ -16,15 +18,13 @@ import { LogSink } from '../logger';
 export class IMEStateTracker {
     private logger: LogSink;
     private adapter: IPlatformAdapter;
-    private lastAutoSwitchTime = 0;
-    private autoSwitchSuppressUntil = 0;
     private manualOverride = false;
     private currentIME = '';
     private lastPositionLine = -1;
     private lastPositionChar = -1;
     private pollingTimer: NodeJS.Timeout | null = null;
     private onChangeCallback: ((newIME: string) => void) | null = null;
-    private pollingInterval = 500; // Increased from 150ms — poll is only for external manual switches
+    private usePolling = false;
 
     constructor(adapter: IPlatformAdapter, logger: LogSink) {
         this.adapter = adapter;
@@ -33,16 +33,27 @@ export class IMEStateTracker {
 
     /**
      * Start listening for IME state changes
+     * Linux: D-Bus signal (event-driven, no polling)
+     * Windows: polling (500ms)
      */
-    startListening(intervalMs?: number): void {
+    async startListening(intervalMs?: number): Promise<void> {
         this.currentIME = this.adapter.queryMode();
         this.logger.info(`[StateTracker] Initial IME: ${this.currentIME}`);
 
-        if (intervalMs) {
-            this.pollingInterval = intervalMs;
+        // Try event-driven listening (D-Bus on Linux)
+        if (this.adapter.startListening) {
+            const connected = await this.tryStartEventListening();
+            if (connected) {
+                this.logger.info('[StateTracker] Event-driven listening active (D-Bus)');
+                return;
+            }
         }
-        this.startPolling();
-        this.logger.info(`[StateTracker] Polling started (${this.pollingInterval}ms)`);
+
+        // Fallback to polling (Windows, or D-Bus unavailable)
+        this.usePolling = true;
+        const interval = intervalMs || 500;
+        this.startPolling(interval);
+        this.logger.info(`[StateTracker] Polling started (${interval}ms)`);
     }
 
     /**
@@ -64,17 +75,8 @@ export class IMEStateTracker {
     }
 
     /**
-     * Mark as auto switch (before executing switchToXxx)
-     * Sets suppress window to prevent polling from detecting our own switch
-     */
-    markAutoSwitch(): void {
-        this.lastAutoSwitchTime = Date.now();
-        this.autoSwitchSuppressUntil = this.lastAutoSwitchTime + 1500;
-    }
-
-    /**
-     * Notify that an auto-switch was successful
-     * Updates currentIME immediately to prevent poll from re-detecting
+     * Notify that a switch was performed by the controller
+     * Updates currentIME immediately to prevent poll/event re-detection
      */
     notifyAutoSwitch(mode: 'zh' | 'en'): void {
         if (this.currentIME !== mode) {
@@ -119,15 +121,7 @@ export class IMEStateTracker {
     }
 
     /**
-     * Get current IME mode
-     */
-    getCurrentIME(): string {
-        return this.currentIME;
-    }
-
-    /**
      * Sync state with system (call on window focus)
-     * Refreshes adapter's internal state from actual system state
      */
     syncState(): void {
         if (this.adapter.syncState) {
@@ -142,40 +136,53 @@ export class IMEStateTracker {
 
     // ========== Private ==========
 
-    private startPolling(): void {
-        this.pollingTimer = setInterval(() => {
-            // Skip query during suppress window
-            if (Date.now() < this.autoSwitchSuppressUntil) return;
-
-            const newIME = this.adapter.queryMode();
-            if (newIME && newIME !== this.currentIME) {
-                this.handleIMEChange(newIME);
-            }
-        }, this.pollingInterval);
+    /**
+     * Try to start event-driven listening via adapter
+     */
+    private async tryStartEventListening(): Promise<boolean> {
+        try {
+            await this.adapter.startListening!((newIME: 'zh' | 'en') => {
+                this.handleExternalSwitch(newIME);
+            });
+            return true;
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            this.logger.info(`[StateTracker] Event listening failed: ${msg}`);
+            return false;
+        }
     }
 
-    private handleIMEChange(newIME: string): void {
+    /**
+     * Handle external switch detected by D-Bus signal or polling
+     */
+    private handleExternalSwitch(newIME: string): void {
         if (newIME === this.currentIME) return;
 
         const oldIME = this.currentIME;
-        const now = Date.now();
+        this.currentIME = newIME;
+        this.manualOverride = true;
 
-        // Within suppress window → auto switch, don't trigger manual logic
-        if (now < this.autoSwitchSuppressUntil) {
-            this.currentIME = newIME;
-            const elapsed = now - this.lastAutoSwitchTime;
-            this.logger.info(`[StateTracker] Auto switch: ${oldIME} → ${newIME} (${elapsed}ms)`);
-            return;
+        // Sync adapter internal state so queryMode() returns the correct value
+        if (this.adapter.syncState) {
+            this.adapter.syncState();
         }
 
-        this.currentIME = newIME;
-
-        // User manual switch
-        this.manualOverride = true;
-        this.logger.info(`[StateTracker] Manual switch: ${oldIME} → ${newIME}, pausing auto switch`);
+        this.logger.info(`[StateTracker] External switch: ${oldIME} → ${newIME}, pausing auto`);
 
         if (this.onChangeCallback) {
             this.onChangeCallback(newIME);
         }
+    }
+
+    /**
+     * Polling fallback (Windows only)
+     */
+    private startPolling(intervalMs: number): void {
+        this.pollingTimer = setInterval(() => {
+            const newIME = this.adapter.queryMode();
+            if (newIME && newIME !== this.currentIME) {
+                this.handleExternalSwitch(newIME);
+            }
+        }, intervalMs);
     }
 }

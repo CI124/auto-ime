@@ -5,6 +5,56 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.7.0] - 2026-06-05
+
+### 概述
+
+v0.7.0 是 Linux 平台的性能和架构优化版本。引入 D-Bus 事件驱动机制替代轮询，
+实现即时检测用户手动切换输入法，同时完全消除编辑器卡顿。删除已废弃的 Fcitx4 支持。
+
+### 新增
+
+- **D-Bus 事件驱动监听**：新增 `src/platforms/linux/dbus-listener.ts`，统一 Fcitx5 和 IBus 的 D-Bus 信号监听
+  - Fcitx5: 监听 `org.fcitx.Fcitx5.Controller1.InputMethodChanged` 信号
+  - IBus: 监听 `org.freedesktop.IBus.GlobalEngineChanged` 信号
+  - 信号到达即时回调，无轮询延迟，无子进程开销
+- **IPlatformAdapter.startListening()**：新增事件驱动监听接口，平台适配器可注册外部切换回调
+- **StateTracker 事件驱动模式**：Linux 使用 D-Bus 信号，Windows 使用轮询兜底
+
+### 优化
+
+- **Linux 不再轮询**：D-Bus 信号替代 500ms 轮询，检测延迟从 500ms 降到即时
+- **内部状态追踪**：`queryMode()` 返回内部变量（<0.01ms），不调用子进程
+- **跳过冗余切换**：`switchToXxx()` 目标相同时返回 `skip`，不执行 `execSync`
+- **统一状态更新**：`switchTo()` 先更新 `currentIME` 再执行切换，D-Bus 回声自动过滤
+- **D-Bus 回声过滤**：我们的切换触发的 D-Bus 信号通过 `currentIME` 一致性检查自动跳过
+- **日志系统优化**：
+  - 移除 `queryIMEMode` 每次调用的 debug 日志
+  - `setIMEMode` ImmGetContext 失败不再输出日志（TSF 下已知会失败）
+  - `No WASM mapping` 每个 languageId 只输出一次
+  - ESC/toggle 后 poll 不再误判为 Manual switch
+
+### 删除
+
+- **Fcitx4 支持**：已废弃的输入法框架，用户应迁移到 Fcitx5
+  - 删除 `Fcitx4Manager` 类
+  - 删除 `fcitx-remote` 命令调用
+  - 检测链简化为：Fcitx5 → IBus → 不可用
+
+### Bug 修复
+
+- **修复初始化竞态**：`extension.ts` 激活时 `adapter.switchToEnglish()` 后添加 `stateTracker.notifyAutoSwitch('en')`，防止首次光标事件被误判为手动切换
+- **修复 D-Bus 通知后 adapter 状态未同步**：`handleExternalSwitch` 中调用 `adapter.syncState()` 同步内部状态
+- **修复 ESC/toggle 后 poll 误判**：`forceEnglish()` 和 `toggleIME()` 添加 `notifyAutoSwitch()` 调用
+- **修复 suppress 窗口未更新 currentIME**：自动切换的回声正确更新状态
+- **删除死代码**：`stateTracker.getCurrentIME()` 从未被调用
+
+### 测试
+
+- Linux mock 测试：56/56 通过
+- Windows mock 测试：39/39 通过
+- 新增 D-Bus 相关 bundle 验证（DbusIMEListener、FCITX5_DBUS、IBUS_DBUS、信号名）
+
 ## [0.6.0] - 2026-06-04
 
 ### 概述

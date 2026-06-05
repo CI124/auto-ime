@@ -1,19 +1,18 @@
 /**
  * Linux Platform Adapter
- * Auto-detects and delegates to Fcitx5, Fcitx4, or IBus
+ * Auto-detects and delegates to Fcitx5 or IBus
  *
- * Business logic restored from v0.5.0:
+ * Business logic:
  * - Fcitx5: reads ~/.config/fcitx5/profile to discover actual input method names
- * - Fcitx4: uses exit code based query (1=English, 2=Chinese)
  * - IBus: exact match against configured engine name
  * - PATH: ensures /usr/local/bin, /usr/bin, /bin are available
  * - Detection: uses bash -c "command -v ..." for reliable detection
  *
- * Performance optimization (v0.6.1):
- * - queryMode() uses internal state tracking instead of execSync calls
- * - switchToXxx() skips execution when already in target state
- * - syncFromSystem() queries actual system state (called on window focus)
- * - This eliminates per-keystroke subprocess calls that caused editor lag
+ * D-Bus event-driven:
+ * - Fcitx5: listens to InputMethodChanged signal (instant, no polling)
+ * - IBus: listens to GlobalEngineChanged signal (instant, no polling)
+ *
+ * Fcitx4 removed: deprecated project, users should migrate to Fcitx5
  */
 
 import { execFileSync } from 'child_process';
@@ -23,6 +22,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { IPlatformAdapter, SwitchResult } from '../../core/types';
 import { LogSink } from '../../logger';
+import { DbusIMEListener, FCITX5_DBUS, IBUS_DBUS, IMEChangeCallback } from './dbus-listener';
 
 // ========== PATH Helper ==========
 
@@ -123,6 +123,8 @@ export class LinuxAdapter implements IPlatformAdapter {
     private logger!: LogSink;
     private envPath!: string;
     private manager: LinuxIMEManager | null = null;
+    private dbusListener: DbusIMEListener | null = null;
+    private changeCallback: IMEChangeCallback | null = null;
 
     init(logger: LogSink): void {
         this.logger = logger;
@@ -132,14 +134,11 @@ export class LinuxAdapter implements IPlatformAdapter {
         if (this.isFcitx5Available()) {
             this.manager = new Fcitx5Manager(logger, this.envPath);
             logger.info('[Linux] Using Fcitx5');
-        } else if (this.isFcitx4Available()) {
-            this.manager = new Fcitx4Manager(logger, this.envPath);
-            logger.info('[Linux] Using Fcitx4');
         } else if (this.isIBusAvailable()) {
             this.manager = new IBusManager(logger, this.envPath);
             logger.info('[Linux] Using IBus');
         } else {
-            logger.warn('[Linux] No supported IME framework detected');
+            logger.warn('[Linux] No supported IME framework detected (Fcitx5/IBus)');
         }
     }
 
@@ -164,7 +163,7 @@ export class LinuxAdapter implements IPlatformAdapter {
 
     /**
      * Sync internal state with actual system state
-     * Called on window focus restore to detect external manual switches
+     * Called on window focus restore
      */
     syncState(): void {
         if (this.manager && 'syncFromSystem' in this.manager) {
@@ -172,22 +171,43 @@ export class LinuxAdapter implements IPlatformAdapter {
         }
     }
 
-    dispose(): void {
-        // nothing to clean up
+    /**
+     * Start D-Bus signal listening for external manual switches
+     * Callback fires immediately when user switches via system tray
+     */
+    async startListening(callback: IMEChangeCallback): Promise<void> {
+        this.changeCallback = callback;
+        this.dbusListener = new DbusIMEListener(this.logger);
+
+        if (this.manager instanceof Fcitx5Manager) {
+            const englishTarget = this.manager.getEnglishTarget();
+            await this.dbusListener.start(
+                FCITX5_DBUS,
+                (name) => name === englishTarget || name.includes('keyboard'),
+                callback,
+            );
+        } else if (this.manager instanceof IBusManager) {
+            const englishEngine = this.manager.getEnglishEngine();
+            await this.dbusListener.start(
+                IBUS_DBUS,
+                (name) => name === englishEngine,
+                callback,
+            );
+        }
     }
 
-    // ========== Detection (v0.5.0 logic: bash -c "command -v ...") ==========
+    dispose(): void {
+        if (this.dbusListener) {
+            this.dbusListener.stop();
+            this.dbusListener = null;
+        }
+    }
+
+    // ========== Detection ==========
 
     private isFcitx5Available(): boolean {
         return tryExecBash(
             'command -v fcitx5-remote >/dev/null 2>&1 && [ -f "$HOME/.config/fcitx5/profile" ]',
-            this.envPath, 5000
-        );
-    }
-
-    private isFcitx4Available(): boolean {
-        return tryExecBash(
-            'command -v fcitx-remote >/dev/null 2>&1',
             this.envPath, 5000
         );
     }
@@ -209,7 +229,7 @@ interface LinuxIMEManager {
     syncFromSystem?(): void;
 }
 
-// ========== Fcitx5 Manager (v0.5.0 logic + internal state tracking) ==========
+// ========== Fcitx5 Manager ==========
 
 const FCITX5_SWITCH_SCRIPT = `fcitx5-remote -s "$1"`;
 
@@ -218,7 +238,7 @@ class Fcitx5Manager implements LinuxIMEManager {
     private envPath: string;
     private englishTarget: string;
     private chineseTarget: string;
-    private currentTarget: string; // Internal state tracking
+    private currentTarget: string;
 
     constructor(logger: LogSink, envPath: string) {
         this.logger = logger;
@@ -226,14 +246,13 @@ class Fcitx5Manager implements LinuxIMEManager {
         const targets = readFcitx5Profile(logger);
         this.englishTarget = targets.english;
         this.chineseTarget = targets.chinese;
-        // Initialize internal state from system
         this.currentTarget = this.queryFromSystem();
         logger.info(`[Fcitx5] Initial state: ${this.currentTarget === this.englishTarget ? 'en' : 'zh'}`);
     }
 
-    /**
-     * Query mode using internal state (no subprocess call)
-     */
+    getEnglishTarget(): string { return this.englishTarget; }
+    getChineseTarget(): string { return this.chineseTarget; }
+
     queryMode(): 'zh' | 'en' {
         return this.currentTarget === this.englishTarget ? 'en' : 'zh';
     }
@@ -256,10 +275,6 @@ class Fcitx5Manager implements LinuxIMEManager {
         return { success: true, method: 'fcitx5' };
     }
 
-    /**
-     * Sync internal state with actual system state (subprocess call)
-     * Called on window focus restore to detect external manual switches
-     */
     syncFromSystem(): void {
         const systemTarget = this.queryFromSystem();
         if (systemTarget !== this.currentTarget) {
@@ -268,9 +283,6 @@ class Fcitx5Manager implements LinuxIMEManager {
         }
     }
 
-    /**
-     * Query actual system state via subprocess (only called during init and sync)
-     */
     private queryFromSystem(): string {
         const result = this.runBash('fcitx5-remote -n', [], 'fcitx5-remote -n');
         return result || this.englishTarget;
@@ -287,78 +299,14 @@ class Fcitx5Manager implements LinuxIMEManager {
     }
 }
 
-// ========== Fcitx4 Manager (v0.5.0 logic + internal state tracking) ==========
-
-const FCITX4_SWITCH_SCRIPT = `timeout 5 fcitx-remote "$1" &> /dev/null`;
-
-class Fcitx4Manager implements LinuxIMEManager {
-    private logger: LogSink;
-    private envPath: string;
-    private currentMode: 'zh' | 'en'; // Internal state tracking
-
-    constructor(logger: LogSink, envPath: string) {
-        this.logger = logger;
-        this.envPath = envPath;
-        // Initialize internal state from system
-        this.currentMode = this.queryFromSystem();
-        logger.info(`[Fcitx4] Initial state: ${this.currentMode}`);
-    }
-
-    queryMode(): 'zh' | 'en' {
-        return this.currentMode;
-    }
-
-    switchToEnglish(): SwitchResult {
-        if (this.currentMode === 'en') {
-            return { success: true, method: 'skip' };
-        }
-        this.currentMode = 'en';
-        this.runBash(FCITX4_SWITCH_SCRIPT, ['-c'], 'fcitx-remote -c');
-        return { success: true, method: 'fcitx4' };
-    }
-
-    switchToChinese(): SwitchResult {
-        if (this.currentMode === 'zh') {
-            return { success: true, method: 'skip' };
-        }
-        this.currentMode = 'zh';
-        this.runBash(FCITX4_SWITCH_SCRIPT, ['-o'], 'fcitx-remote -o');
-        return { success: true, method: 'fcitx4' };
-    }
-
-    syncFromSystem(): void {
-        const systemMode = this.queryFromSystem();
-        if (systemMode !== this.currentMode) {
-            this.logger.info(`[Fcitx4] Sync: ${this.currentMode} → ${systemMode}`);
-            this.currentMode = systemMode;
-        }
-    }
-
-    private queryFromSystem(): 'zh' | 'en' {
-        const result = this.runBash('fcitx-remote 2>/dev/null; echo $?', [], 'fcitx-remote query');
-        const code = parseInt(result.trim(), 10);
-        return code === 2 ? 'zh' : 'en';
-    }
-
-    private runBash(script: string, args: string[], label: string): string {
-        try {
-            return runBash(script, args, this.envPath, 1000);
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            this.logger.error(`[Fcitx4] ${label} failed: ${message}`);
-            return '';
-        }
-    }
-}
-
-// ========== IBus Manager (v0.5.0 logic + internal state tracking) ==========
+// ========== IBus Manager ==========
 
 const IBUS_ENGINE_SCRIPT = `ibus engine "$1" &> /dev/null`;
 
 class IBusManager implements LinuxIMEManager {
     private logger: LogSink;
     private envPath: string;
-    private currentMode: 'zh' | 'en'; // Internal state tracking
+    private currentMode: 'zh' | 'en';
     private englishEngine: string;
     private chineseEngine: string;
 
@@ -368,10 +316,12 @@ class IBusManager implements LinuxIMEManager {
         const config = vscode.workspace.getConfiguration('auto-ime.ibus');
         this.englishEngine = config.get<string>('englishEngine') || 'xkb:us::eng';
         this.chineseEngine = config.get<string>('chineseEngine') || 'libpinyin';
-        // Initialize internal state from system
         this.currentMode = this.queryFromSystem();
         logger.info(`[IBus] Initial state: ${this.currentMode}`);
     }
+
+    getEnglishEngine(): string { return this.englishEngine; }
+    getChineseEngine(): string { return this.chineseEngine; }
 
     queryMode(): 'zh' | 'en' {
         return this.currentMode;

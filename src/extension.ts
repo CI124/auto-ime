@@ -15,6 +15,7 @@ import { ASTAnalyzer } from './ASTAnalyzer';
 import { createLogger, LogSink } from './logger';
 import { IMEController } from './core/controller';
 import { IMEStateTracker } from './core/state-tracker';
+import { IPlatformAdapter } from './core/types';
 import { createPlatformAdapter } from './platforms';
 import { NormalModeListener } from './modes/normal';
 import { VimModeListener } from './modes/vim';
@@ -23,6 +24,7 @@ let outputChannel: vscode.OutputChannel;
 let logger: LogSink | null = null;
 let controller: IMEController | null = null;
 let stateTracker: IMEStateTracker | null = null;
+let activeAdapter: IPlatformAdapter | null = null;
 let activeDisposables: vscode.Disposable[] = [];
 let isVimMode = false;
 
@@ -78,6 +80,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // ========== Platform Adapter ==========
     const adapter = createPlatformAdapter(logger);
+    activeAdapter = adapter;
 
     // Windows: check English keyboard
     if (process.platform === 'win32' && !englishKeyboardWarningShown && !adapter.isReady()) {
@@ -100,7 +103,7 @@ export async function activate(context: vscode.ExtensionContext) {
         controller?.updateStatusBar(isEnglish ? 'en' : 'zh');
         logger.info(`[StatusBar] Manual switch sync: ${newIME} → ${isEnglish ? 'EN' : 'ZH'}`);
     });
-    stateTracker.startListening(
+    await stateTracker.startListening(
         process.platform === 'win32'
             ? (vscode.workspace.getConfiguration('auto-ime.windows').get<number>('pollingInterval') || 150)
             : undefined
@@ -124,6 +127,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // Initial state: switch to English keyboard and update status bar
     adapter.switchToEnglish();
     controller.updateStatusBar('en');
+    stateTracker.notifyAutoSwitch('en'); // Sync state tracker to prevent false manual switch detection
 
     // Register toggle command
     const toggleCommand = vscode.commands.registerCommand('auto-ime.toggleIME', () => {
@@ -189,4 +193,6 @@ export function deactivate() {
     for (const d of activeDisposables) d.dispose();
     activeDisposables = [];
     stateTracker?.stopListening();
+    activeAdapter?.dispose?.();
+    activeAdapter = null;
 }

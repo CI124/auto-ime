@@ -168,7 +168,6 @@ export class IMEController {
 
     private switchTo(mode: 'zh' | 'en'): void {
         this.updateStatusBar(mode); // Optimistic update
-        this.stateTracker.markAutoSwitch();
         this.stateTracker.notifyAutoSwitch(mode); // Update state tracker immediately
 
         let result: SwitchResult;
