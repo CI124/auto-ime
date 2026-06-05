@@ -458,6 +458,16 @@ test('Fcitx4 switchToChinese 调用 fcitx-remote -o', () => {
     assert.ok(found, '应调用 fcitx-remote');
 });
 
+test('Fcitx4 queryMode: exit code 0 → en (不等于 2)', () => {
+    resetMock();
+    mockState.fcitx5Available = false;
+    mockState.ibusAvailable = false;
+    mockState.profileExists = false;
+    const adapter = createAdapter();
+    mockState.fcitx4ExitCode = 0;
+    assert.strictEqual(adapter.queryMode(), 'en', 'exit code 0 不等于 2 应返回 en');
+});
+
 test('Fcitx4 中英文完整切换流程', () => {
     resetMock();
     mockState.fcitx5Available = false;
@@ -529,6 +539,16 @@ test('IBus switchToChinese 调用 ibus engine', () => {
     assert.ok(found, '应调用 ibus engine');
 });
 
+test('IBus queryMode: 空引擎名 → en (空结果回退)', () => {
+    resetMock();
+    mockState.fcitx5Available = false;
+    mockState.fcitx4Available = false;
+    mockState.profileExists = false;
+    const adapter = createAdapter();
+    mockState.ibusCurrentEngine = '';
+    assert.strictEqual(adapter.queryMode(), 'en', '空引擎名应返回 en (空结果 = ibus 未运行)');
+});
+
 test('IBus 中英文完整切换流程', () => {
     resetMock();
     mockState.fcitx5Available = false;
@@ -596,6 +616,7 @@ test('不可用时连续调用安全', () => {
 // ──────────────────────────────────────────────────────────────
 console.log('\n📦 测试 5: 超时与异常安全');
 // ──────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────
 
 test('fcitx5-remote 超时，queryMode 返回 en', () => {
     resetMock();
@@ -636,6 +657,25 @@ test('连续超时不累积阻塞：10 次调用均 < 1s', () => {
     const start = Date.now();
     for (let i = 0; i < 10; i++) adapter.queryMode();
     assert.ok(Date.now() - start < 1000, '10 次调用应 < 1s');
+});
+
+test('fcitx5-remote 超时，switchToEnglish 不抛异常', () => {
+    resetMock();
+    mockState.fcitx4Available = false;
+    mockState.ibusAvailable = false;
+    mockState.timeoutCommands.add('fcitx5-remote');
+    const adapter = createAdapter();
+    assert.doesNotThrow(() => adapter.switchToEnglish(), '超时不应阻塞');
+});
+
+test('ibus engine 超时，switchToChinese 不抛异常', () => {
+    resetMock();
+    mockState.fcitx5Available = false;
+    mockState.fcitx4Available = false;
+    mockState.profileExists = false;
+    mockState.timeoutCommands.add('ibus engine');
+    const adapter = createAdapter();
+    assert.doesNotThrow(() => adapter.switchToChinese(), '超时不应阻塞');
 });
 
 // ──────────────────────────────────────────────────────────────
@@ -758,7 +798,51 @@ test('profile 包含注释行和空行时正确解析', () => {
 });
 
 // ──────────────────────────────────────────────────────────────
-console.log('\n📦 测试 8: bash 命令与参数');
+console.log('\n📦 测试 8: 异常传播安全');
+// ──────────────────────────────────────────────────────────────
+
+test('readFcitx5Profile 读取异常不传播', () => {
+    resetMock();
+    const origRead = fs.readFileSync;
+    fs.readFileSync = function(p, enc) {
+        if (typeof p === 'string' && p.includes('fcitx5')) {
+            throw new Error('Permission denied');
+        }
+        return origRead(p, enc);
+    };
+    mockState.fcitx4Available = false;
+    mockState.ibusAvailable = false;
+    assert.doesNotThrow(() => {
+        const adapter = createAdapter();
+        mockState.fcitx5CurrentInput = 'keyboard-us';
+        assert.strictEqual(adapter.queryMode(), 'en', '应使用默认值');
+    });
+    fs.readFileSync = origRead;
+});
+
+test('readFcitx5Profile 文件内容格式异常不传播', () => {
+    resetMock();
+    mockState.profileContent = '这不是一个有效的 profile 文件内容!!!';
+    mockState.fcitx4Available = false;
+    mockState.ibusAvailable = false;
+    assert.doesNotThrow(() => {
+        const adapter = createAdapter();
+        mockState.fcitx5CurrentInput = 'keyboard-us';
+        assert.strictEqual(adapter.queryMode(), 'en');
+    });
+});
+
+test('所有 bash 命令失败时 createPlatformAdapter 不传播异常', () => {
+    resetMock();
+    mockState.fcitx5Available = false;
+    mockState.fcitx4Available = false;
+    mockState.ibusAvailable = false;
+    mockState.profileExists = false;
+    assert.doesNotThrow(() => createAdapter());
+});
+
+// ──────────────────────────────────────────────────────────────
+console.log('\n📦 测试 9: bash 命令与参数');
 // ──────────────────────────────────────────────────────────────
 
 test('fcitx5 切换脚本使用 $1 参数传递', () => {
@@ -860,6 +944,33 @@ test('bundle 包含控制器', () => {
 
 test('bundle 包含状态追踪器', () => {
     assert.ok(bundleSrc.includes('IMEStateTracker') || bundleSrc.includes('StateTracker'));
+});
+
+test('bundle 包含手动覆盖逻辑', () => {
+    assert.ok(bundleSrc.includes('manualOverride'), '应包含 manualOverride');
+});
+
+test('bundle 包含 markAutoSwitch / markManualSwitch', () => {
+    assert.ok(bundleSrc.includes('markAutoSwitch'), '应包含 markAutoSwitch');
+    assert.ok(bundleSrc.includes('markManualSwitch'), '应包含 markManualSwitch');
+    assert.ok(bundleSrc.includes('resetManualOverride'), '应包含 resetManualOverride');
+});
+
+test('bundle 包含光标位置跟踪', () => {
+    assert.ok(bundleSrc.includes('isDifferentPosition'), '应包含 isDifferentPosition');
+    assert.ok(bundleSrc.includes('lastPositionLine'), '应包含 lastPositionLine');
+});
+
+test('bundle 包含 suppress 窗口逻辑', () => {
+    assert.ok(bundleSrc.includes('autoSwitchSuppressUntil'), '应包含 suppress 窗口');
+});
+
+test('bundle 包含轮询状态检测', () => {
+    assert.ok(bundleSrc.includes('pollingTimer') || bundleSrc.includes('setInterval'), '应包含轮询逻辑');
+});
+
+test('bundle 包含 Fcitx5 轮询间隔', () => {
+    assert.ok(bundleSrc.includes('pollingInterval'), '应包含轮询间隔配置');
 });
 
 // ──────────────────────────────────────────────────────────────

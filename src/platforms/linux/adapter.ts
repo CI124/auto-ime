@@ -294,7 +294,7 @@ class IBusManager implements LinuxIMEManager {
 
     queryMode(): 'zh' | 'en' {
         const result = this.runBash('ibus engine', [], 'ibus engine query');
-        if (!result) return 'en';
+        if (!result) return 'en'; // empty result means ibus not running or no engine
         const config = vscode.workspace.getConfiguration('auto-ime.ibus');
         const engEngine = config.get<string>('englishEngine') || 'xkb:us::eng';
         return result === engEngine ? 'en' : 'zh';
