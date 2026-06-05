@@ -63,7 +63,7 @@ export class IMEStateTracker {
      */
     markAutoSwitch(): void {
         this.lastAutoSwitchTime = Date.now();
-        this.autoSwitchSuppressUntil = this.lastAutoSwitchTime + 600;
+        this.autoSwitchSuppressUntil = this.lastAutoSwitchTime + 1500;
     }
 
     /**
@@ -141,16 +141,17 @@ export class IMEStateTracker {
         if (newIME === this.currentIME) return;
 
         const oldIME = this.currentIME;
-        this.currentIME = newIME;
-
         const now = Date.now();
 
         // Within suppress window → auto switch, don't trigger manual logic
         if (now < this.autoSwitchSuppressUntil) {
+            this.currentIME = newIME; // Update state to prevent re-detection
             const elapsed = now - this.lastAutoSwitchTime;
             this.logger.info(`[StateTracker] Auto switch: ${oldIME} → ${newIME} (${elapsed}ms)`);
             return;
         }
+
+        this.currentIME = newIME;
 
         // User manual switch
         this.manualOverride = true;
