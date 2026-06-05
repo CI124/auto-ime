@@ -1,38 +1,55 @@
-# Dependencies
-node_modules/
+# ========================================
+# Whitelist mode: ignore everything first
+# ========================================
+*
 
-# Build output
-dist/
+# ========================================
+# Whitelist: source code
+# ========================================
+!src/
+!src/**
 
-# VS Code extension package
-*.vsix
+# ========================================
+# Whitelist: build & config
+# ========================================
+!package.json
+!package-lock.json
+!tsconfig.json
+!esbuild.js
+!.gitignore
+!.vscodeignore
 
-# Sandbox environment
-.vscode-sandbox/
+# ========================================
+# Whitelist: documentation
+# ========================================
+!README.md
+!README_EN.md
+!CHANGELOG.md
+!CONTRIBUTING.md
+!LICENSE
 
-# OS files
-.DS_Store
-Thumbs.db
+# ========================================
+# Whitelist: scripts & tests
+# ========================================
+!scripts/
+!scripts/**
+!test/
+!test/**
 
-# IDE files
-.idea/
-*.swp
-*.swo
-*~
-.codegraph/
+# ========================================
+# Whitelist: docs
+# ========================================
+!docs/
+!docs/**
 
-# Graphify output
-graphify-out/
+# ========================================
+# Whitelist: assets
+# ========================================
+!icon.png
 
-# Claude Code config
-.claude/
-
-# VS Code personal settings (workspace-specific, not for extension)
-.vscode/settings.json
-
-# Internal design docs (already implemented)
-docs/architecture-proposal.md
-
-# AI tool configs
-CLAUDE.md
-.github/copilot-instructions.md
+# ========================================
+# Whitelist: VS Code workspace configs
+# ========================================
+!.vscode/
+!.vscode/launch.json
+!.vscode/tasks.json
