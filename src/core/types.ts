@@ -34,8 +34,12 @@ export interface IPlatformAdapter {
     /** Sync internal state with system state (after manual switch) */
     syncState?(): void;
 
-    /** Start event-driven listening for external manual switches (D-Bus signals, etc.) */
-    startListening?(callback: (mode: 'zh' | 'en') => void): Promise<void>;
+    /**
+     * Start event-driven listening for external manual switches.
+     * Returns true if event-driven listening was set up (polling fallback still recommended).
+     * Returns false if only polling should be used.
+     */
+    startListening?(callback: (mode: 'zh' | 'en') => void): Promise<boolean>;
 
     /** Release resources */
     dispose?(): void;

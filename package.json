@@ -3,7 +3,7 @@
   "displayName": "Auto IME",
   "description": "Auto switch input method based on code context using AST (Linux & Windows)",
   "publisher": "CI124",
-  "version": "0.7.0",
+  "version": "0.8.0-beta",
   "repository": {
     "type": "git",
     "url": "https://github.com/CI124/auto-ime.git"

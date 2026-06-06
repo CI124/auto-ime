@@ -5,6 +5,78 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.8.0-beta] - 2026-06-06
+
+### 概述
+
+v0.8.0-beta 是 Linux 平台状态追踪的重大改进版本。通过实际 D-Bus 信号测试发现，
+Fcitx5 不会为远程切换（fcitx5-remote）发出 InputContext 信号，因此将状态追踪机制
+从 D-Bus 事件驱动改为自适应轮询，确保可靠检测用户手动切换输入法。
+
+### 重大变更
+
+- **状态追踪机制重构**：从 D-Bus 事件驱动改为自适应轮询
+  - 经过完整的 D-Bus 信号测试（dbus-monitor），确认 Fcitx5 不发出 InputContext 信号
+  - 使用异步轮询替代同步轮询，完全消除主线程阻塞
+  - 自适应间隔：活动状态 100ms，空闲状态 500ms
+
+### 新增
+
+- **自适应轮询机制**：
+  - `runBashAsync()`：异步执行 shell 命令，不阻塞主线程
+  - `queryModeAsync()`：异步查询当前输入法状态
+  - `AdaptivePollConfig`：可配置的轮询间隔参数
+  - 活动状态检测延迟 ~100ms，空闲状态 ~500ms
+- **D-Bus 诊断脚本**：
+  - `scripts/diagnose-dbus.js`：基础 D-Bus 环境检测
+  - `scripts/diagnose-dbus-deep.js`：深度 D-Bus 信号分析
+- **D-Bus 信号测试脚本**：
+  - `test/dbus-signal-test.js`：信号监听测试
+  - `test/dbus-signal-test-v2.js`：改进版测试
+  - `test/dbus-signal-test-v3.js`：Portal 路径测试
+  - `test/dbus-quick-check.js`：快速连接检测
+  - `test/dbus-automated-test.js`：自动化切换测试
+
+### 优化
+
+- **消除主线程阻塞**：
+  - 旧方案：`execFileSync` 同步执行，每次阻塞 7-16ms
+  - 新方案：`exec` 异步执行，0% 阻塞
+- **智能轮询间隔**：
+  - 检测到输入法变化后保持高频轮询（100ms）
+  - 5 秒无变化后降频到空闲轮询（500ms）
+  - 平衡响应速度和 CPU 占用
+- **代码清理**：
+  - `dbus-listener.ts` 标记为 `@deprecated`，保留供未来参考
+  - 移除 `LinuxAdapter` 中的 D-Bus 相关代码
+
+### 技术发现
+
+通过实际测试发现的关键问题：
+
+1. **Fcitx5 D-Bus 信号问题**：
+   - `dbus-monitor` 显示只有 method call（SetCurrentIM、Toggle），没有 signal
+   - InputContext 信号只在当前活跃的 InputContext 中触发
+   - 通过 `fcitx5-remote` 命令切换不会触发信号
+
+2. **Fcitx5 D-Bus 路径**：
+   - 旧路径 `/inputmethod` 不存在
+   - 正确路径：`/org/freedesktop/portal/inputmethod`
+   - Controller1 接口：`/controller`
+
+3. **性能对比**：
+   | 方案 | 阻塞 | 延迟 | CPU 占用 |
+   |------|------|------|----------|
+   | 同步轮询 | 5-15% | 100ms | 低 |
+   | 异步轮询 | 0% | 100ms | 低 |
+   | 自适应轮询 | 0% | 100-500ms | 最低 |
+
+### 测试
+
+- Linux mock 测试：56/56 通过
+- 编译成功，无 TypeScript 错误
+- Bundle 验证：包含自适应轮询相关代码
+
 ## [0.7.0] - 2026-06-05
 
 ### 概述

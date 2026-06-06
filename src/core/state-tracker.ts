@@ -2,9 +2,15 @@
  * IME State Tracker
  * Tracks current IME mode, detects manual vs auto switches, manages override state
  *
- * Event-driven architecture:
- * - Linux: D-Bus signals (Fcitx5 InputMethodChanged / IBus GlobalEngineChanged)
- * - Windows: polling (no D-Bus available)
+ * State tracking strategy:
+ * - Linux: Adaptive polling via LinuxAdapter (100ms active, 500ms idle)
+ * - Windows: Polling via WindowsAdapter (configurable interval)
+ * - Both platforms use polling for reliable external switch detection
+ *
+ * Why polling instead of D-Bus signals?
+ * - Fcitx5 does NOT emit InputContext signals for remote switching (fcitx5-remote)
+ * - dbus-monitor testing showed only method calls, no signals
+ * - Async polling is reliable and non-blocking
  *
  * No suppress window needed:
  * - controller.switchTo() updates adapter internal state BEFORE notifyAutoSwitch()
@@ -24,7 +30,6 @@ export class IMEStateTracker {
     private lastPositionChar = -1;
     private pollingTimer: NodeJS.Timeout | null = null;
     private onChangeCallback: ((newIME: string) => void) | null = null;
-    private usePolling = false;
 
     constructor(adapter: IPlatformAdapter, logger: LogSink) {
         this.adapter = adapter;
@@ -33,27 +38,42 @@ export class IMEStateTracker {
 
     /**
      * Start listening for IME state changes
-     * Linux: D-Bus signal (event-driven, no polling)
-     * Windows: polling (500ms)
+     * 
+     * Strategy:
+     * 1. Call adapter.startListening() which handles platform-specific polling
+     * 2. Start a low-frequency fallback polling as safety net
+     * 
+     * The adapter's startListening() returns:
+     * - false: adapter handles its own polling (Linux adaptive, Windows interval)
+     * - true: event-driven mode (currently unused, reserved for future)
      */
     async startListening(intervalMs?: number): Promise<void> {
         this.currentIME = this.adapter.queryMode();
         this.logger.info(`[StateTracker] Initial IME: ${this.currentIME}`);
 
-        // Try event-driven listening (D-Bus on Linux)
+        // Start adapter's platform-specific listening
         if (this.adapter.startListening) {
-            const connected = await this.tryStartEventListening();
-            if (connected) {
-                this.logger.info('[StateTracker] Event-driven listening active (D-Bus)');
-                return;
+            try {
+                const eventDriven = await this.adapter.startListening((newIME: 'zh' | 'en') => {
+                    this.handleExternalSwitch(newIME);
+                });
+                
+                if (eventDriven) {
+                    this.logger.info('[StateTracker] Event-driven listening active');
+                } else {
+                    this.logger.info('[StateTracker] Adapter handles its own polling');
+                }
+            } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                this.logger.warn(`[StateTracker] Adapter startListening failed: ${msg}`);
             }
         }
 
-        // Fallback to polling (Windows, or D-Bus unavailable)
-        this.usePolling = true;
-        const interval = intervalMs || 500;
-        this.startPolling(interval);
-        this.logger.info(`[StateTracker] Polling started (${interval}ms)`);
+        // Always start low-frequency fallback polling as safety net
+        // This catches edge cases where adapter polling might miss a change
+        const fallbackInterval = intervalMs || 2000;
+        this.startFallbackPolling(fallbackInterval);
+        this.logger.info(`[StateTracker] Fallback polling started (${fallbackInterval}ms)`);
     }
 
     /**
@@ -137,23 +157,7 @@ export class IMEStateTracker {
     // ========== Private ==========
 
     /**
-     * Try to start event-driven listening via adapter
-     */
-    private async tryStartEventListening(): Promise<boolean> {
-        try {
-            await this.adapter.startListening!((newIME: 'zh' | 'en') => {
-                this.handleExternalSwitch(newIME);
-            });
-            return true;
-        } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            this.logger.info(`[StateTracker] Event listening failed: ${msg}`);
-            return false;
-        }
-    }
-
-    /**
-     * Handle external switch detected by D-Bus signal or polling
+     * Handle external switch detected by polling or adapter callback
      */
     private handleExternalSwitch(newIME: string): void {
         if (newIME === this.currentIME) return;
@@ -175,9 +179,15 @@ export class IMEStateTracker {
     }
 
     /**
-     * Polling fallback (Windows only)
+     * Low-frequency fallback polling (safety net)
+     * 
+     * This runs at a lower frequency than the adapter's own polling
+     * to catch any edge cases where the adapter might miss a change.
+     * 
+     * Linux: adapter uses 100ms/500ms adaptive, this uses 2000ms
+     * Windows: adapter uses configurable interval (default 150ms), this uses 2000ms
      */
-    private startPolling(intervalMs: number): void {
+    private startFallbackPolling(intervalMs: number): void {
         this.pollingTimer = setInterval(() => {
             const newIME = this.adapter.queryMode();
             if (newIME && newIME !== this.currentIME) {
@@ -185,4 +195,5 @@ export class IMEStateTracker {
             }
         }, intervalMs);
     }
+
 }

@@ -81,8 +81,8 @@ code --install-extension auto-ime-0.6.0.vsix
 
 | 平台 | 框架 | 说明 |
 |------|------|------|
-| Linux | **Fcitx5**（推荐） | D-Bus 事件驱动 + profile 自动读取 |
-| Linux | **IBus** | D-Bus 事件驱动 + 引擎配置 |
+| Linux | **Fcitx5**（推荐） | 自适应轮询 + profile 自动读取 |
+| Linux | **IBus** | 自适应轮询 + 引擎配置 |
 | Windows | **双键盘** | 英语(1033) ↔ 拼音(2052)，需安装英语键盘 |
 | Windows | **TSF 管道**（实验性） | 单键盘内中英切换 |
 
@@ -93,7 +93,7 @@ code --install-extension auto-ime-0.6.0.vsix
 3. **AST 解析**：Tree-sitter 增量解析，判断光标在注释/字符串/代码中
 4. **切换决策**：只在注释中切换中文，字符串不干预
 5. **平台切换**：适配器执行实际切换（Linux: shell 命令，Windows: 键盘布局）
-6. **外部切换检测**：Linux 通过 D-Bus 信号即时检测，Windows 通过轮询检测
+6. **外部切换检测**：Linux 通过自适应轮询检测（100-500ms），Windows 通过轮询检测
 7. **状态栏更新**：乐观更新显示
 
 ## 开发

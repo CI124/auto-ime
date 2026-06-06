@@ -79,6 +79,8 @@ export class IMEController {
         }
 
         const position = editor.selections[0].active;
+        // Guard against stale positions after document changes
+        if (position.line >= document.lineCount) return;
         const cursor = `L${position.line + 1}:${position.character}`;
         const lang = document.languageId;
         const vimMode = this.isVimMode() ? (this.isInInsertMode(editor) ? 'I' : 'N') : '-';

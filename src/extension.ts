@@ -62,6 +62,13 @@ function switchToVimMode(ctx: vscode.ExtensionContext, controller: IMEController
         logger,
     });
     ctx.subscriptions.push(...activeDisposables);
+
+    // Sync IME state with current cursor position after Vim mode activation
+    // (Vim Normal mode skips auto-switch, but we should sync once on detection)
+    const editor = vscode.window.activeTextEditor;
+    if (editor) {
+        controller.analyzeAndSwitch(editor);
+    }
 }
 
 export async function activate(context: vscode.ExtensionContext) {
