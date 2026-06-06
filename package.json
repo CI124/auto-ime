@@ -75,7 +75,6 @@
   },
   "dependencies": {
     "@koromix/koffi-win32-x64": "^3.0.2",
-    "dbus-next": "^0.10.2",
     "koffi": "^3.0.2",
     "web-tree-sitter": "^0.22.6"
   },
