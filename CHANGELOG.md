@@ -5,6 +5,23 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.8.1-beta] - 2026-06-07
+
+### 概述
+
+v0.8.1-beta 清理了废弃的 D-Bus 相关代码和依赖，减小包体积，消除安全警告。
+
+### 删除
+
+- **dbus-listener.ts**：已废弃的 D-Bus 信号监听模块（自适应轮询方案不依赖它）
+- **dbus-next 依赖**：已从 node_modules 中移除（包体积减小 ~150KB）
+
+### 测试
+
+- 编译成功，无 TypeScript 错误
+- Linux mock 测试：56/56 通过
+- dist/ 中无 dbus-next 残留
+
 ## [0.8.0-beta] - 2026-06-06
 
 ### 概述
