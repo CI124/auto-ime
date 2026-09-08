@@ -3,7 +3,7 @@
   "displayName": "Auto IME",
   "description": "Auto switch input method based on code context using AST (Linux & Windows)",
   "publisher": "CI124",
-  "version": "0.8.2-beta",
+  "version": "0.9.0-beta",
   "repository": {
     "type": "git",
     "url": "https://github.com/CI124/auto-ime.git"
@@ -61,6 +61,34 @@
           "minimum": 50,
           "maximum": 1000,
           "description": "Windows IME state polling interval in milliseconds (lower = more responsive, higher = less CPU)"
+        },
+        "auto-ime.windows.strategy": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "dual-keyboard",
+            "single-keyboard"
+          ],
+          "enumDescriptions": [
+            "Auto: dual-keyboard layout switching when English(1033) + Chinese(2052) are installed, otherwise single-keyboard IME toggle",
+            "Dual keyboard: always switch keyboard layouts (requires an English keyboard layout)",
+            "Single keyboard: switch Chinese/English inside one IME by simulating the IME toggle hotkey"
+          ],
+          "description": "Windows switching strategy. 'auto' keeps the classic dual-keyboard behaviour; 'single-keyboard' works with only a Chinese keyboard installed."
+        },
+        "auto-ime.windows.toggleKey": {
+          "type": "string",
+          "default": "shift",
+          "enum": [
+            "shift",
+            "ctrl-space"
+          ],
+          "enumDescriptions": [
+            "Shift: a lone Shift press toggles Chinese/English (default for Microsoft Pinyin on Windows 11)",
+            "Ctrl+Space: the classic IME toggle hotkey"
+          ],
+          "description": "Hotkey used to toggle Chinese/English inside a single-keyboard IME. Must match the hotkey configured in your IME."
         }
       }
     }

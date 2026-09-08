@@ -295,7 +295,9 @@ test('bundle 包含控制器和状态追踪器', () => {
 });
 
 test('bundle 包含三层切换策略', () => {
-    assert.ok(bundleSrc.includes('imm32') && bundleSrc.includes('tsf') && bundleSrc.includes('layout'), '应包含三层策略');
+    // layout=双键盘布局切换, imm32=IMM32 回退, toggle=单键盘 IME 热键切换
+    assert.ok(bundleSrc.includes('imm32') && bundleSrc.includes('layout'), '应包含 imm32 与 layout 策略');
+    assert.ok(bundleSrc.includes('sendImeToggle') || bundleSrc.includes('keybd_event'), '应包含单键盘热键切换');
 });
 
 // ---- 测试 4: 模块结构 ----
@@ -453,7 +455,7 @@ test('queryIMEMode 包含 Language ID 降级逻辑', () => {
     // queryIMEMode 函数体内应包含 getCurrentLanguageId 和 isChineseLangId
     const queryIMEModeSection = bundleSrc.substring(
         bundleSrc.indexOf('function queryIMEMode('),
-        bundleSrc.indexOf('function queryTSFMode(')
+        bundleSrc.indexOf('function sendImeToggle(')
     );
     assert.ok(queryIMEModeSection.includes('getCurrentLanguageId'), 'queryIMEMode 应包含 getCurrentLanguageId 调用');
     assert.ok(queryIMEModeSection.includes('isChineseLangId'), 'queryIMEMode 应包含 isChineseLangId 调用');
@@ -465,7 +467,7 @@ test('switchToEnglish/switchToChinese uses getCurrentLanguageId (same mechanism 
     // switchToEnglish/Chinese 应使用 getCurrentLanguageId 检查当前布局
     const switchStart = bundleSrc.indexOf('switchToEnglish() {');
     const switchSection = bundleSrc.substring(switchStart, switchStart + 2000);
-    assert.ok(!switchSection.includes('queryTSFMode'), '切换路径不应调用 queryTSFMode');
+    assert.ok(!switchSection.includes('sendImeToggle'), '双键盘切换路径不应调用 sendImeToggle');
     assert.ok(!switchSection.includes('setIMEMode'), '双键盘方案不应调用 setIMEMode');
     assert.ok(switchSection.includes('getCurrentLanguageId'), '切换路径应使用 getCurrentLanguageId 检查当前布局');
 });
@@ -481,55 +483,38 @@ test('switchToEnglish 不缓存降级状态', () => {
     assert.ok(!bundleSrc.includes('preferredMethod'), '不应包含 preferredMethod 缓存');
 });
 
-// ---- 测试 8: TSF 持久化管道 ----
-console.log('\n📦 测试 8: TSF 持久化管道 (tsf-pipe.ts)');
+// ---- 测试 8: 单键盘 IME 切换热键 ----
+console.log('\n📦 测试 8: 单键盘 IME 切换热键 (single-keyboard toggle)');
 
-test('tsf-pipe.ts 源文件存在', () => {
-    const tsfPipePath = require('path').join(__dirname, '..', 'src', 'win32', 'tsf-pipe.ts');
-    assert.ok(fs.existsSync(tsfPipePath), 'tsf-pipe.ts 应存在于 src/win32/');
+// 背景：原「TSF compartment 持久化管道」方案实测无效 —— 从扩展宿主进程写
+// GUID_COMPARTMENT_KEYBOARD_OPENCLOSE 全局 compartment 并不会改变前台应用的输入法
+// 中英状态（该状态是线程/应用级，且宿主与渲染进程分离）。已整体移除，改为向前台窗口
+// 注入 IME 切换热键（Shift / Ctrl+Space），让 IME 自己翻转。
+test('bundle 包含单键盘热键切换机制', () => {
+    assert.ok(bundleSrc.includes('SingleKeyboardStrategy'), '应包含 SingleKeyboardStrategy');
+    assert.ok(bundleSrc.includes('sendImeToggle'), '应包含 sendImeToggle');
+    assert.ok(bundleSrc.includes('keybd_event'), '应通过 keybd_event 注入按键');
+    assert.ok(bundleSrc.includes('VK_SHIFT'), '应包含 Shift 切换键');
+    assert.ok(bundleSrc.includes('VK_CONTROL'), '应包含 Ctrl 切换键');
 });
 
-test('bundle 包含 TSFPipe 类', () => {
-    assert.ok(bundleSrc.includes('TSFPipe'), 'bundle 应包含 TSFPipe 类引用');
+test('bundle 包含 auto-ime.windows.toggleKey 配置', () => {
+    assert.ok(bundleSrc.includes('toggleKey'), '应读取 toggleKey 配置');
+    assert.ok(bundleSrc.includes('ctrl-space'), '应支持 ctrl-space 取值');
 });
 
-test('bundle 包含持久化管道命令协议', () => {
-    assert.ok(bundleSrc.includes('INIT:OK'), '应包含 INIT:OK 协议');
-    assert.ok(bundleSrc.includes('QUERY'), '应包含 QUERY 命令');
-    assert.ok(bundleSrc.includes('SET:'), '应包含 SET 命令');
-    assert.ok(bundleSrc.includes('EXIT'), '应包含 EXIT 命令');
-});
-
-test('bundle 包含管道超时逻辑', () => {
-    assert.ok(bundleSrc.includes('Command timeout'), '应包含命令超时处理');
-});
-
-test('bundle 包含 queryTSFModeAsync 异步方法', () => {
-    assert.ok(bundleSrc.includes('queryTSFModeAsync'), '应包含异步查询方法');
-});
-
-test('bundle 包含 setTSFModeAsync 异步方法', () => {
-    assert.ok(bundleSrc.includes('setTSFModeAsync'), '应包含异步设置方法');
-});
-
-test('bundle 包含 disposeTSFPipe 清理方法', () => {
-    assert.ok(bundleSrc.includes('disposeTSFPipe'), '应包含管道清理方法');
+test('bundle 不再包含已废弃的 TSF compartment 管道', () => {
+    // 全局 compartment 写入 + PowerShell 持久化管道 + C# 桥接均已移除
+    assert.ok(!bundleSrc.includes('TSFPipe'), '不应再包含 TSFPipe 类');
+    assert.ok(!bundleSrc.includes('[Console]::In.ReadLine'), '不应再保留 PowerShell 管道');
+    assert.ok(!bundleSrc.includes('58273AAD'), '不应再包含 TSF compartment GUID');
+    assert.ok(!bundleSrc.includes('529A9E6B'), '不应再包含 CLSID_TF_ThreadMgr');
 });
 
 test('bundle 包含模式监听器', () => {
     // New architecture: NormalModeListener + VimModeListener
     assert.ok(bundleSrc.includes('NormalModeListener') || bundleSrc.includes('normal'), '应包含普通模式监听器');
     assert.ok(bundleSrc.includes('VimModeListener') || bundleSrc.includes('vim'), '应包含 Vim 模式监听器');
-});
-
-test('TSF 管道使用 stdin/stdout 通信', () => {
-    assert.ok(bundleSrc.includes('[Console]::In.ReadLine'), '应通过 stdin 读取命令');
-    assert.ok(bundleSrc.includes('Write-Output'), '应通过 stdout 输出结果');
-});
-
-test('TSF 管道使用 MsTf.TF_ThreadMgr COM 对象', () => {
-    assert.ok(bundleSrc.includes('MsTf.TF_ThreadMgr'), '应使用 TSF COM 对象');
-    assert.ok(bundleSrc.includes('58273AAD-01BB-4164-95C6-755BA0B5162D'), '应使用正确的 compartment GUID');
 });
 
 // ---- 汇总 ----

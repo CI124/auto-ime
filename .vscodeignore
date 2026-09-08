@@ -1,0 +1,20 @@
+# Bundled by esbuild into dist/extension.js — except native modules (koffi),
+# which are marked external and must ship as node_modules
+node_modules/**
+!node_modules
+!node_modules/koffi
+!node_modules/koffi/**
+!node_modules/@koromix
+!node_modules/@koromix/**
+src/**
+scripts/**
+test/**
+.codegraph/**
+.workbuddy/**
+**/.workbuddy/**
+wasm/**
+.gitignore
+esbuild.js
+tsconfig.json
+package-lock.json
+CONTRIBUTING.md

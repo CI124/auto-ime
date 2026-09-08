@@ -47,7 +47,17 @@ export interface IPlatformAdapter {
 
 export type SwitchResult = {
     success: boolean;
-    method: string;  // 'layout' | 'imm32' | 'tsf' | 'fcitx5' | 'ibus' | 'skip' | 'none'
+    /**
+     * 'layout'      keyboard layout switch (Windows dual keyboard)
+     * 'imm32'       IMM32 conversion status (Windows legacy)
+     * 'toggle'      IME toggle hotkey (Windows single keyboard) — a *flip*, not
+     *               an absolute set, because the IME state is thread-scoped and
+     *               cannot be read/written cross-process
+     * 'fcitx5' | 'ibus'  Linux frameworks
+     * 'skip'        already in the requested mode, no work done
+     * 'none'        no strategy available
+     */
+    method: string;
     elapsedMs?: number;
 };
 

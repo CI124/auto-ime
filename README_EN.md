@@ -73,6 +73,8 @@ code --install-extension auto-ime-0.8.1.vsix
 | `auto-ime.ibus.englishEngine` | `xkb:us::eng` | IBus English engine |
 | `auto-ime.ibus.chineseEngine` | `libpinyin` | IBus Chinese engine |
 | `auto-ime.windows.pollingInterval` | `150` | Windows polling interval (ms) |
+| `auto-ime.windows.strategy` | `auto` | Windows switching strategy: `auto` (default, dual-keyboard when an English layout exists, otherwise single-keyboard toggle) / `dual-keyboard` (force layout switching) / `single-keyboard` (force in-IME Chinese/English toggle) |
+| `auto-ime.windows.toggleKey` | `shift` | Single-keyboard toggle hotkey: `shift` (Microsoft Pinyin default on Win11) / `ctrl-space`; must match the hotkey configured in your IME |
 
 ## Supported IME Frameworks
 
@@ -80,8 +82,19 @@ code --install-extension auto-ime-0.8.1.vsix
 |----------|-----------|-------------|
 | Linux | **Fcitx5** (recommended) | Adaptive polling + auto-reads profile |
 | Linux | **IBus** | Adaptive polling + engine config |
-| Windows | **Dual keyboard** | English(1033) ↔ Pinyin(2052), requires English keyboard |
-| Windows | **TSF pipe** (experimental) | Single keyboard Chinese/English toggle |
+| Windows | **Dual keyboard** (default) | English(1033) ↔ Pinyin(2052), requires an English keyboard layout |
+| Windows | **Single keyboard toggle** | Toggles Chinese/English inside one IME by simulating the IME toggle hotkey — no English layout needed |
+
+**Windows single-keyboard requirements**
+
+- Enabled automatically when only a Chinese IME (e.g. Microsoft Pinyin) is installed
+  and no English(1033) layout exists
+- Switching works by simulating the IME's own toggle hotkey (default `Shift`,
+  configurable to `Ctrl+Space`); the hotkey must match your IME's setting
+- To force it even with an English layout installed, set `auto-ime.windows.strategy` to `single-keyboard`
+- **Limitation**: TSF-only apps cannot be read cross-process, so the extension only
+  tracks its own target state; a manual switch (mouse / system tray) can cause drift,
+  correct it with `Ctrl+Shift+Space` (`auto-ime.toggleIME`)
 
 ## How It Works
 
@@ -89,8 +102,8 @@ code --install-extension auto-ime-0.8.1.vsix
 2. **Fast path**: Synchronous text detection for line/block comments
 3. **AST parsing**: Tree-sitter incremental parsing, determines comment/string/code context
 4. **Switch decision**: Only switches to Chinese in comments, strings unchanged
-5. **Platform switch**: Adapter executes actual switch (Linux: shell commands, Windows: keyboard layout)
-6. **External switch detection**: Linux via adaptive polling (100-500ms), Windows via polling
+5. **Platform switch**: Adapter executes actual switch (Linux: shell commands, Windows: keyboard layout or IME hotkey)
+6. **External switch detection**: Linux via adaptive polling (100-500ms); Windows single-keyboard has no cross-process read, relies on tracked state
 7. **Status bar**: Optimistic display update
 
 ## Development
@@ -104,16 +117,17 @@ npm run watch        # Watch mode
 ### Tests
 
 ```bash
-node test/mock-koffi-test.js      # Windows (39 cases)
-node test/mock-linux-ime-test.js  # Linux (70 cases)
+node test/mock-koffi-test.js      # Windows (33 cases)
+node test/mock-tsf-test.js        # Windows single keyboard (16 cases)
+node test/mock-linux-ime-test.js  # Linux (56 cases)
 node test/ast-analyzer-test.js    # AST (59 cases)
 ```
 
 ## FAQ
 
-**Extension not working**: Check "Auto IME" output panel. Windows requires English(US) keyboard.
+**Extension not working**: Check "Auto IME" output panel. Windows dual-keyboard mode requires an English(US) keyboard; single-keyboard mode requires a Chinese IME installed.
 
-**IME not switching**: Linux: verify Fcitx5/IBus is running. Windows: check log for switch method.
+**IME not switching**: Linux: verify Fcitx5/IBus is running. Windows single-keyboard: ensure `auto-ime.windows.toggleKey` matches your IME's toggle hotkey (Microsoft Pinyin default is Shift).
 
 **Performance**: Dynamic debounce (10-60ms) + incremental parsing (3x faster) + fast path detection.
 

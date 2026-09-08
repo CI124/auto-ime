@@ -5,6 +5,54 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.9.0-beta] - 2026-09-08
+
+### 概述
+
+v0.9.0-beta 补上 Windows「单键盘」场景：系统里只装了中文输入法（没有英语 1033 键盘
+布局）时，旧的双键盘方案完全失效，只能打日志提示用户去装英语键盘。本版本实现
+`SingleKeyboardStrategy`，通过向前台窗口注入 IME 切换热键（Shift / Ctrl+Space）在
+同一个输入法内部切换中 / 英。
+
+> **重要**：最初计划直接写 TSF 的 `GUID_COMPARTMENT_KEYBOARD_OPENCLOSE` 全局
+> compartment，但真机实测（Windows 11 26200）证明该方案**无效**——IME 开/关状态是
+> 线程/应用级的，而扩展宿主与编辑器渲染进程是两个不同进程，从宿主写全局 compartment
+> 不会改变前台应用的输入法状态（写入后打字仍然组字）。因此最终改为「模拟 IME 切换
+> 热键，让 IME 自己翻转」。详见下文「已知限制」。
+
+### 新增
+
+- **`src/platforms/windows/single-keyboard.ts`**：单键盘策略
+  - 内部维护 `targetMode` 跟踪目标状态；`switchToEnglish()` / `switchToChinese()`
+    同步返回 `{ success: true, method: 'toggle' }`，重复切换同一模式返回 `skip`
+  - 通过 `keybd_event` 向前台窗口注入 IME 切换热键（默认 Shift，可配 Ctrl+Space）
+- **`src/win32/ime-ffi.ts`**：新增 `sendImeToggle()`（keybd_event 注入切换热键）
+- **`test/mock-tsf-test.js`**：16 条用例，覆盖单键盘分支、双键盘行为不变、
+  显式配置、热键注入、注入失败健壮性
+
+### 变更
+
+- **`src/platforms/windows/adapter.ts`**：
+  - 支持 `DualKeyboardStrategy | SingleKeyboardStrategy`
+  - 新增 `auto-ime.windows.strategy`（`auto` / `dual-keyboard` / `single-keyboard`）
+  - 新增 `auto-ime.windows.toggleKey`（`shift` / `ctrl-space`）
+  - `startListening()` 返回 false（TSF-only 应用无跨进程读取，无法事件驱动监听）
+- **删除（原 TSF compartment 管道方案，实测无效，整体移除）**：
+  - `src/win32/tsf-ffi.ts`、`src/win32/tsf-pipe.ts`、`src/win32/tsf-bridge-csharp.ts`
+  - `src/win32/tsf-helper.cs`（过时参考文件，与实现脱节）
+- **文档**：README / README_EN 更新单键盘说明与配置项
+
+### 已知限制
+
+- **无跨进程读取**：对 TSF-only 应用（VS Code / Electron）`ImmGetContext` 返回 0，
+  且 IME 开/关状态是线程/应用级的，扩展宿主无法读取渲染进程的真实状态。因此：
+  - 只能靠内部跟踪 `targetMode` 判断是否要切换
+  - 用户用鼠标/系统托盘手动切换会导致状态漂移，需手动 `auto-ime.toggleIME` 校正
+- **切换是「翻转」而非「绝对设置」**：依赖输入法自己的切换热键，热键须与输入法
+  设置一致（微软拼音 Win11 默认 Shift；其它输入法可能用 Ctrl+Space）
+- **双键盘仍是默认推荐**：单键盘模式只在没有英语键盘布局时兜底
+- 未适配 Linux（本次未触碰 `src/platforms/linux/`）
+
 ## [0.8.2-beta] - 2026-09-08
 
 ### 概述

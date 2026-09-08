@@ -53,15 +53,15 @@ auto-ime/
 │   ├── platforms/              # 平台适配
 │   │   ├── index.ts            # 工厂：win32 → WindowsAdapter，其它 → LinuxAdapter
 │   │   ├── linux/adapter.ts    # Fcitx5 / IBus（自适应轮询）
-│   │   └── windows/adapter.ts  # 双键盘策略
+│   │   ├── windows/adapter.ts  # 双键盘 / 单键盘策略分发
+│   │   ├── windows/dual-keyboard.ts     # 双键盘（键盘布局切换）
+│   │   └── windows/single-keyboard.ts   # 单键盘（IME 切换热键）
 │   └── win32/                  # Windows FFI 层
-│       ├── ime-ffi.ts          # koffi: user32 / imm32
-│       ├── tsf-ffi.ts          # TSF（实验性）
-│       ├── tsf-pipe.ts         # PowerShell 持久化管道
-│       └── tsf-helper.cs       # TSF helper（C#）
+│       └── ime-ffi.ts          # koffi: user32 / imm32（含 keybd_event 热键注入）
 ├── test/                       # 测试
 │   ├── mock-linux-ime-test.js  # Linux IME Mock 测试 (56 用例)
-│   ├── mock-koffi-test.js      # Windows IME Mock 测试 (39 用例)
+│   ├── mock-koffi-test.js      # Windows IME Mock 测试 (33 用例)
+│   ├── mock-tsf-test.js        # Windows 单键盘 Mock 测试 (16 用例)
 │   └── ast-analyzer-test.js    # AST 分析器测试 (59 用例)
 ├── scripts/                    # 辅助脚本
 │   ├── check-env.js            # 环境检测（Linux 输入法框架连通性）

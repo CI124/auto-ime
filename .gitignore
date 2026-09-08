@@ -39,4 +39,5 @@
 # Whitelist: assets
 # ========================================
 !icon.png
+!.vscodeignore
 ARCHITECTURE.md

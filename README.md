@@ -76,6 +76,8 @@ code --install-extension auto-ime-0.8.1.vsix
 | `auto-ime.ibus.englishEngine` | `xkb:us::eng` | IBus 英文引擎 |
 | `auto-ime.ibus.chineseEngine` | `libpinyin` | IBus 中文引擎 |
 | `auto-ime.windows.pollingInterval` | `150` | Windows 轮询间隔（ms） |
+| `auto-ime.windows.strategy` | `auto` | Windows 切换策略：`auto`（默认，有英语键盘走双键盘，否则走单键盘热键）/ `dual-keyboard`（强制键盘布局切换）/ `single-keyboard`（强制单键盘内中英切换） |
+| `auto-ime.windows.toggleKey` | `shift` | 单键盘切换热键：`shift`（微软拼音 Win11 默认）/ `ctrl-space`，需与输入法自身设置一致 |
 
 ## 支持的输入法框架
 
@@ -83,8 +85,17 @@ code --install-extension auto-ime-0.8.1.vsix
 |------|------|------|
 | Linux | **Fcitx5**（推荐） | 自适应轮询 + profile 自动读取 |
 | Linux | **IBus** | 自适应轮询 + 引擎配置 |
-| Windows | **双键盘** | 英语(1033) ↔ 拼音(2052)，需安装英语键盘 |
-| Windows | **TSF 管道**（实验性） | 单键盘内中英切换 |
+| Windows | **双键盘**（默认） | 英语(1033) ↔ 拼音(2052)，需安装英语键盘 |
+| Windows | **单键盘热键** | 只装中文键盘时，模拟输入法切换热键在输入法内部切换中/英 |
+
+**Windows 单键盘适用条件**
+
+- 系统只装了中文输入法（如微软拼音），没有英语(1033) 键盘布局时自动启用
+- 切换通过模拟输入法自己的切换热键实现（默认 `Shift`，可改为 `Ctrl+Space`），
+  热键须与输入法设置一致（微软拼音 Win11 默认 Shift 切换中英文）
+- 想强制使用（即使已装英语键盘），把 `auto-ime.windows.strategy` 设为 `single-keyboard`
+- **限制**：TSF-only 应用无法跨进程读取输入法真实状态，扩展只能内部跟踪目标状态；
+  用鼠标/系统托盘手动切换会造成状态漂移，此时可用 `Ctrl+Shift+Space`（`auto-ime.toggleIME`）校正
 
 ## 工作原理
 
@@ -92,8 +103,8 @@ code --install-extension auto-ime-0.8.1.vsix
 2. **快速路径**：同步文本检测行注释和块注释
 3. **AST 解析**：Tree-sitter 增量解析，判断光标在注释/字符串/代码中
 4. **切换决策**：只在注释中切换中文，字符串不干预
-5. **平台切换**：适配器执行实际切换（Linux: shell 命令，Windows: 键盘布局）
-6. **外部切换检测**：Linux 通过自适应轮询检测（100-500ms），Windows 通过轮询检测
+5. **平台切换**：适配器执行实际切换（Linux: shell 命令，Windows: 键盘布局或 IME 热键）
+6. **外部切换检测**：Linux 通过自适应轮询检测（100-500ms）；Windows 单键盘模式无跨进程读取，靠内部状态跟踪
 7. **状态栏更新**：乐观更新显示
 
 ## 开发
@@ -107,16 +118,19 @@ npm run watch        # 监听模式
 ### 测试
 
 ```bash
-node test/mock-koffi-test.js      # Windows (39 用例)
+node test/mock-koffi-test.js      # Windows (33 用例)
+node test/mock-tsf-test.js        # Windows 单键盘 (16 用例)
 node test/mock-linux-ime-test.js  # Linux (56 用例)
 node test/ast-analyzer-test.js    # AST (59 用例)
 ```
 
 ## 常见问题
 
-**扩展不工作**：查看 "Auto IME" 输出面板日志。Windows 需安装英语(美国)键盘。
+**扩展不工作**：查看 "Auto IME" 输出面板日志。Windows 双键盘模式需安装英语(美国)键盘；
+单键盘模式确认系统装有中文输入法。
 
-**输入法没切换**：Linux 确认 Fcitx5/IBus 正在运行。Windows 查看日志确认切换方法。
+**输入法没切换**：Linux 确认 Fcitx5/IBus 正在运行。Windows 单键盘模式确认
+`auto-ime.windows.toggleKey` 与输入法自身的切换热键一致（微软拼音默认 Shift）。
 
 **性能问题**：动态防抖（10-60ms）+ 增量解析（3x 提速）+ 快速路径检测。
 

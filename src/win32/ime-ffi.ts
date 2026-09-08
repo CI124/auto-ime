@@ -225,66 +225,44 @@ export function queryIMEMode(logger?: LogSink): 'zh' | 'en' | null {
     return null;
 }
 
-/**
- * 通过 TSF compartment 读取输入法模式（微软拼音等 TSF 输入法）
- * 返回 'zh' | 'en'，失败返回 null（调用方应降级到 IMM32）
- */
-export function queryTSFMode(): 'zh' | 'en' | null {
-    try {
-        const tsfFfi = require('./tsf-ffi');
-        return tsfFfi.queryTSFMode();
-    } catch {
-        return null;
-    }
-}
+// ============ 单键盘切换：模拟 IME 切换热键 ============
+
+// 为什么用「模拟切换热键」而不是直接写 TSF compartment？
+// 实测（Windows 11 26200）证明：从扩展宿主进程写 GUID_COMPARTMENT_KEYBOARD_OPENCLOSE
+// 全局 compartment 并不能改变前台应用的中英状态——该状态是「线程级/应用级」的，而扩展宿主
+// 与编辑器渲染进程是两个不同的进程。对 TSF-only 应用（VS Code / Electron）ImmGetContext
+// 恒返回 0，IMM32 也读不到、写不动。唯一可靠的跨进程手段是让 IME 自己翻转：向前台窗口注入
+// 切换热键（Shift 或 Ctrl+Space），由 IME 内部处理。
+// 局限：这是「翻转」而非「绝对设置」，且无法跨进程读取真实状态，扩展只能内部跟踪目标状态。
+
+export type ToggleKey = 'shift' | 'ctrl-space';
+
+const VK_SHIFT = 0x10;
+const VK_CONTROL = 0x11;
+const VK_SPACE = 0x20;
+
+const keybdEvent = user32.func(
+    'void __stdcall keybd_event(uint8_t, uint8_t, uint32_t, uint64)'
+);
 
 /**
- * 通过 TSF compartment 设置输入法模式
- * 返回是否成功
+ * 向前台窗口注入一次 IME 切换热键（让 IME 自己翻转中英）。
+ * 同步注入、立即返回；实际翻转由 IME 在后台处理。
  */
-export function setTSFMode(chinese: boolean): boolean {
-    try {
-        const tsfFfi = require('./tsf-ffi');
-        return tsfFfi.setTSFMode(chinese);
-    } catch {
-        return false;
+export function sendImeToggle(key: ToggleKey, logger?: LogSink): void {
+    const down = 0;
+    const up = 2;
+    if (key === 'ctrl-space') {
+        keybdEvent(VK_CONTROL, 0, down, 0n);
+        keybdEvent(VK_SPACE, 0, down, 0n);
+        keybdEvent(VK_SPACE, 0, up, 0n);
+        keybdEvent(VK_CONTROL, 0, up, 0n);
+    } else {
+        // 默认：Shift（微软拼音 Win11 默认的中英切换键）
+        keybdEvent(VK_SHIFT, 0, down, 0n);
+        keybdEvent(VK_SHIFT, 0, up, 0n);
     }
-}
-
-/**
- * 通过持久化 PowerShell 管道查询 TSF 模式（异步，~2-5ms）
- * 返回 'zh' | 'en' | null
- */
-export async function queryTSFModeAsync(): Promise<'zh' | 'en' | null> {
-    try {
-        const tsfFfi = require('./tsf-ffi');
-        return await tsfFfi.queryTSFModeAsync();
-    } catch {
-        return null;
-    }
-}
-
-/**
- * 通过持久化 PowerShell 管道设置 TSF 模式（异步，~2-5ms）
- * 返回是否成功
- */
-export async function setTSFModeAsync(chinese: boolean): Promise<boolean> {
-    try {
-        const tsfFfi = require('./tsf-ffi');
-        return await tsfFfi.setTSFModeAsync(chinese);
-    } catch {
-        return false;
-    }
-}
-
-/**
- * 释放持久化 PowerShell 管道
- */
-export function disposeTSFPipe(): void {
-    try {
-        const tsfFfi = require('./tsf-ffi');
-        tsfFfi.disposeTSFPipe();
-    } catch {}
+    logger?.debug(`[FFI] sendImeToggle(${key})`);
 }
 
 /**
@@ -322,17 +300,4 @@ export function setIMEMode(chinese: boolean, logger?: LogSink): boolean {
         logger?.debug('[FFI] setIMEMode: ImmSetConversionStatus failed');
     }
     return ok !== 0;
-}
-
-/**
- * 检测当前窗口是否使用 TSF 输入法（通过 ITfThreadMgr COM 接口）
- * 使用 koffi 直接调用 ole32.dll COM 函数
- */
-export function isTSFEnabled(): boolean {
-    try {
-        const tsfFfi = require('./tsf-ffi');
-        return tsfFfi.detectTSF();
-    } catch {
-        return false;
-    }
 }
