@@ -5,6 +5,46 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.8.2-beta] - 2026-09-08
+
+### 概述
+
+v0.8.2-beta 是死代码与文档清理版本。v0.7.0 删除 Fcitx4 支持、v0.8.0 将状态追踪从
+D-Bus 信号改为自适应轮询、v0.8.1 移除 dbus-next 依赖之后，仍有部分测试脚本和文档
+未同步更新，本版本一并收尾。无功能变更。
+
+### 删除
+
+- **D-Bus 测试脚本（5 个）**：`test/dbus-signal-test.js`、`-v2.js`、`-v3.js`、
+  `dbus-quick-check.js`、`dbus-automated-test.js`
+  （v0.8.0 起架构改为自适应轮询，不再依赖 D-Bus 信号）
+- **D-Bus 诊断脚本（2 个）**：`scripts/diagnose-dbus.js`、`scripts/diagnose-dbus-deep.js`
+- **`package-lock.json` 中的 dbus-next 残留依赖树**：v0.8.1 仅从 `package.json` 摘除了
+  `dbus-next`，lock 中仍保留其全部传递依赖（`xml2js`、`sax`、`request`、`sshpk`、
+  `node-gyp`、`tar`、`npmlog`、`gauge`、`event-stream`、`hexy`、`usocket`、
+  `@nornagon/put`、`long`、`jsbi` 等）。重新生成 lock 后包数由 142 降至 22。
+
+### 修复
+
+- **`scripts/check-env.js`**：
+  - 移除 Fcitx4 检测段落与汇总条目（扩展自 v0.7.0 起不再支持 Fcitx4）
+  - 两处告警文案仍提示「dbus-next 可能无法连接」，该依赖已于 v0.8.1 移除；
+    改为说明自适应轮询不依赖 D-Bus，此项仅作环境诊断
+- **`README.md` / `README_EN.md`**：手动安装示例仍写 `auto-ime-0.6.0.vsix`，更新为 `0.8.1`
+- **`README_EN.md`**：移除已删除的 Fcitx4 支持说明；补齐「外部切换检测」步骤，与中文版一致
+- **`CONTRIBUTING.md`**：
+  - 项目结构与核心模块章节描述的 `IMEManager.ts`、`IMEStateManager.ts` 已不存在，
+    按 `core/` / `modes/` / `platforms/` 现状重写
+  - Mock 测试用例数 70 / 26 更新为实际值 56 / 39，并补充 AST 测试（59 用例）
+  - 移除 `dbus-next`、Fcitx4 相关描述
+
+### 测试
+
+- `node test/mock-koffi-test.js`：39/39 通过
+- `node test/mock-linux-ime-test.js`：56/56 通过
+- `node test/ast-analyzer-test.js`：59/59 通过
+- `npm run compile`：编译成功，无 TypeScript 错误
+
 ## [0.8.1-beta] - 2026-06-07
 
 ### 概述

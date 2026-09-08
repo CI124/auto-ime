@@ -2,7 +2,7 @@
  * scripts/check-env.js
  *
  * 本地 Linux 开发环境检测脚本。
- * 检查系统是否安装并运行了 Fcitx5、Fcitx4 或 IBus，
+ * 检查系统是否安装并运行了 Fcitx5 或 IBus，
  * 并测试命令行工具 / D-Bus 的连通性。
  *
  * 用法: node scripts/check-env.js
@@ -146,33 +146,6 @@ if (hasCommand('fcitx5-remote')) {
   fail('fcitx5-remote 命令不存在');
 }
 
-// ── Fcitx4 检测 ──────────────────────────────────────────
-
-section('Fcitx4 检测');
-const fcitx4 = { available: false, daemon: false };
-
-if (hasCommand('fcitx-remote')) {
-  pass('fcitx-remote 命令存在');
-  fcitx4.available = true;
-
-  const remoteResult = run('fcitx-remote', [], 2000);
-  if (remoteResult.ok) {
-    // fcitx-remote: exit code 1=inactive, 2=active
-    pass(`fcitx daemon 运行中 (输出: "${remoteResult.stdout || '(空)'}")`);
-    fcitx4.daemon = true;
-  } else {
-    // fcitx-remote 通过 exit code 传递状态，非零不一定是失败
-    if (remoteResult.message && remoteResult.message.includes('exit code')) {
-      info(`fcitx-remote 已响应 (exit code 表示状态)`);
-      fcitx4.daemon = true;
-    } else {
-      fail(`fcitx-remote 执行失败: ${remoteResult.stderr || remoteResult.message}`);
-    }
-  }
-} else {
-  fail('fcitx-remote 命令不存在');
-}
-
 // ── IBus 检测 ─────────────────────────────────────────────
 
 section('IBus 检测');
@@ -218,7 +191,7 @@ if (hasCommand('ibus')) {
       pass('D-Bus 上检测到 IBus 服务');
       ibus.dbus = true;
     } else {
-      warn('D-Bus IBus 接口不可达 (dbus-next 监听可能受影响)');
+      warn('D-Bus IBus 接口不可达（自适应轮询不依赖 D-Bus，此项仅作环境诊断）');
     }
   }
 
@@ -242,7 +215,7 @@ section('D-Bus 环境');
 if (process.env.DBUS_SESSION_BUS_ADDRESS) {
   pass(`DBUS_SESSION_BUS_ADDRESS = ${process.env.DBUS_SESSION_BUS_ADDRESS}`);
 } else {
-  warn('DBUS_SESSION_BUS_ADDRESS 未设置 (dbus-next 可能无法连接)');
+  warn('DBUS_SESSION_BUS_ADDRESS 未设置');
 }
 
 const dbusDaemon = runBash('dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.ListNames >/dev/null 2>&1 && echo ok');
@@ -258,7 +231,6 @@ section('检测结果汇总');
 
 const results = [
   { name: 'Fcitx5', available: fcitx5.available, daemon: fcitx5.daemon, detail: fcitx5.profile ? 'profile OK' : '' },
-  { name: 'Fcitx4', available: fcitx4.available, daemon: fcitx4.daemon, detail: '' },
   { name: 'IBus',   available: ibus.available,   daemon: ibus.daemon,   detail: ibus.dbus ? 'D-Bus OK' : '' },
 ];
 

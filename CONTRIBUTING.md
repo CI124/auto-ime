@@ -8,7 +8,7 @@
 
 - Node.js >= 16
 - VS Code
-- Linux 系统（Fcitx5/Fcitx4/IBus）
+- Linux 系统（Fcitx5/IBus）或 Windows
 
 ### 搭建步骤
 
@@ -39,20 +39,34 @@
 
 ```
 auto-ime/
-├── src/                    # 源代码
-│   ├── extension.ts        # 扩展入口，事件监听和生命周期管理
-│   ├── ASTAnalyzer.ts      # Tree-sitter AST 分析器
-│   ├── IMEManager.ts       # 输入法管理器（Fcitx5/Fcitx4/IBus/Windows）
-│   ├── IMEStateManager.ts  # 输入法状态监听
-│   └── win32/              # Windows FFI 层
-├── test/                   # 测试
-│   ├── mock-linux-ime-test.js  # Linux IME Mock 测试 (70 用例)
-│   ├── mock-koffi-test.js      # Windows IME Mock 测试 (26 用例)
-│   └── ast-analyzer-test.js    # AST 分析器测试
-├── scripts/                # 辅助脚本
-│   ├── check-env.js        # 环境检测（输入法/D-Bus 连通性）
-│   ├── download-wasm.js    # postinstall: 下载 WASM 文件
-│   └── prepare-sandbox.js  # F5 前置: 准备测试沙盒
+├── src/                        # 源代码
+│   ├── extension.ts            # 扩展入口，事件监听和生命周期管理
+│   ├── ASTAnalyzer.ts          # Tree-sitter AST 分析器
+│   ├── logger.ts               # 日志（console + Output Channel + 文件）
+│   ├── core/                   # 平台无关核心
+│   │   ├── controller.ts       # 切换决策：注释→中文，代码→英文
+│   │   ├── state-tracker.ts    # 状态追踪：手动覆盖 + 外部切换检测
+│   │   └── types.ts            # IPlatformAdapter 接口
+│   ├── modes/                  # 事件源
+│   │   ├── normal.ts           # 普通编辑器模式
+│   │   └── vim.ts              # VSCodeVim 模式（ESC 劫持）
+│   ├── platforms/              # 平台适配
+│   │   ├── index.ts            # 工厂：win32 → WindowsAdapter，其它 → LinuxAdapter
+│   │   ├── linux/adapter.ts    # Fcitx5 / IBus（自适应轮询）
+│   │   └── windows/adapter.ts  # 双键盘策略
+│   └── win32/                  # Windows FFI 层
+│       ├── ime-ffi.ts          # koffi: user32 / imm32
+│       ├── tsf-ffi.ts          # TSF（实验性）
+│       ├── tsf-pipe.ts         # PowerShell 持久化管道
+│       └── tsf-helper.cs       # TSF helper（C#）
+├── test/                       # 测试
+│   ├── mock-linux-ime-test.js  # Linux IME Mock 测试 (56 用例)
+│   ├── mock-koffi-test.js      # Windows IME Mock 测试 (39 用例)
+│   └── ast-analyzer-test.js    # AST 分析器测试 (59 用例)
+├── scripts/                    # 辅助脚本
+│   ├── check-env.js            # 环境检测（Linux 输入法框架连通性）
+│   ├── download-wasm.js        # postinstall: 下载 WASM 文件
+│   └── prepare-sandbox.js      # F5 前置: 准备测试沙盒
 ├── wasm/                   # Tree-sitter WASM 语言文件
 ├── dist/                   # 编译输出目录
 ├── esbuild.js              # 构建脚本
@@ -68,7 +82,7 @@ auto-ime/
 - 注册 ESC 命令劫持
 - 监听光标移动和文档变化
 - 管理状态栏
-- 协调 ASTAnalyzer 和 IMEManager
+- 协调 ASTAnalyzer、IMEController 与平台适配器
 
 ### ASTAnalyzer.ts
 
@@ -76,21 +90,32 @@ Tree-sitter AST 分析器，负责：
 - 初始化 Tree-sitter WASM
 - 按需加载语言 WASM
 - 解析代码并判断光标是否在注释/字符串中
+- 两级检测：同步文本快速路径 → Tree-sitter Query 精确判定
 
-### IMEManager.ts
+### core/controller.ts
 
-输入法管理器，负责：
-- 自动检测系统输入法框架（策略模式，`IIMEManager` 接口）
-- 通过 shell 命令切换输入法（Linux）或 koffi FFI / PowerShell（Windows）
-- 支持 Fcitx5、Fcitx4、IBus、Windows IMM32/TSF
+切换决策中枢，负责：
+- 根据上下文决定目标输入法（注释 → 中文，代码 → 英文，**字符串内不干预**）
+- 先乐观更新状态栏，再调用平台适配器执行切换
 
-### IMEStateManager.ts
+### core/state-tracker.ts
 
-输入法状态监听器，负责：
-- 监听用户手动切换输入法事件
-- 实现手动覆盖逻辑（暂停自动切换，光标移动到新行后恢复）
-- Linux: Fcitx5 轮询 / IBus D-Bus 信号监听
+输入法状态追踪器，负责：
+- 检测用户手动切换（manualOverride：暂停自动切换，光标移动到新行后恢复）
+- Linux: 自适应轮询（活跃 100ms / 空闲 500ms）
 - Windows: koffi FFI 轮询
+
+> **为什么用轮询而不是 D-Bus 信号？**
+> 实测 Fcitx5 对远程切换（`fcitx5-remote`）不发出 InputContext 信号，
+> `dbus-monitor` 只能观察到 method call，因此 v0.8.0 起改为异步自适应轮询。
+
+### platforms/
+
+平台适配层（`IPlatformAdapter` 接口 + 工厂）：
+- `index.ts` 按 `process.platform` 分发：win32 → WindowsAdapter，其它 → LinuxAdapter（**暂无 macOS 实现**）
+- Linux: Fcitx5（`fcitx5-remote` + profile 解析）/ IBus（`ibus engine`），均为 shell 命令
+- Windows: 双键盘策略，通过 `PostMessageW(WM_INPUTLANGCHANGEREQUEST)` 切换布局（1033 ↔ 2052）
+- Windows 单键盘场景的 TSF 方案尚未接入（见 `platforms/windows/adapter.ts` 中的 TODO）
 
 ## 开发规范
 
@@ -176,21 +201,24 @@ console.log(tree.rootNode.toString());
 npm run check-env
 ```
 
-检测本地 Linux 输入法环境，验证 Fcitx5/Fcitx4/IBus 的安装状态和守护进程连通性。`compile` 和 `watch` 脚本执行前会自动运行。
+检测本地 Linux 输入法环境，验证 Fcitx5/IBus 的安装状态和守护进程连通性。`compile` 和 `watch` 脚本执行前会自动运行。
 
 ### Mock 测试
 
 ```bash
-# Linux IME 测试（70 个用例）
+# Linux IME 测试（56 个用例）
 node test/mock-linux-ime-test.js
 
-# Windows IME 测试（26 个用例）
+# Windows IME 测试（39 个用例）
 node test/mock-koffi-test.js
+
+# AST 分析器测试（59 个用例）
+node test/ast-analyzer-test.js
 ```
 
-Mock 测试通过拦截 `Module._load` 注入模拟的 `child_process`、`fs`、`dbus-next`、`vscode` 模块，在无真实输入法环境下验证：
+Mock 测试通过拦截 `Module._load` 注入模拟的 `child_process`、`fs`、`vscode` 模块，在无真实输入法环境下验证：
 - 各 IME 管理器的查询/切换命令
-- 责任链降级（Fcitx5 → Fcitx4 → IBus → NullManager）
+- 责任链降级（Fcitx5 → IBus → NullManager）
 - 超时与异常安全
 - profile 文件解析
 - bundle 编译产物完整性

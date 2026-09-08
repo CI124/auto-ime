@@ -49,7 +49,7 @@ code --install-extension CI124.auto-ime
 从 [GitHub Releases](https://github.com/CI124/auto-ime/releases) 下载 `.vsix` 文件：
 
 ```bash
-code --install-extension auto-ime-0.6.0.vsix
+code --install-extension auto-ime-0.8.1.vsix
 ```
 
 ## 使用方法

@@ -46,7 +46,7 @@ code --install-extension CI124.auto-ime
 Download from [GitHub Releases](https://github.com/CI124/auto-ime/releases):
 
 ```bash
-code --install-extension auto-ime-0.6.0.vsix
+code --install-extension auto-ime-0.8.1.vsix
 ```
 
 ## Usage
@@ -78,9 +78,8 @@ code --install-extension auto-ime-0.6.0.vsix
 
 | Platform | Framework | Description |
 |----------|-----------|-------------|
-| Linux | **Fcitx5** (recommended) | Auto-reads profile |
-| Linux | **Fcitx4** | `fcitx-remote` command |
-| Linux | **IBus** | `ibus engine` command |
+| Linux | **Fcitx5** (recommended) | Adaptive polling + auto-reads profile |
+| Linux | **IBus** | Adaptive polling + engine config |
 | Windows | **Dual keyboard** | English(1033) ↔ Pinyin(2052), requires English keyboard |
 | Windows | **TSF pipe** (experimental) | Single keyboard Chinese/English toggle |
 
@@ -91,7 +90,8 @@ code --install-extension auto-ime-0.6.0.vsix
 3. **AST parsing**: Tree-sitter incremental parsing, determines comment/string/code context
 4. **Switch decision**: Only switches to Chinese in comments, strings unchanged
 5. **Platform switch**: Adapter executes actual switch (Linux: shell commands, Windows: keyboard layout)
-6. **Status bar**: Optimistic display update
+6. **External switch detection**: Linux via adaptive polling (100-500ms), Windows via polling
+7. **Status bar**: Optimistic display update
 
 ## Development
 
