@@ -5,11 +5,11 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [0.9.0-beta] - 2026-09-08
+## [0.9.0] - 2026-09-08
 
 ### 概述
 
-v0.9.0-beta 补上 Windows「单键盘」场景：系统里只装了中文输入法（没有英语 1033 键盘
+v0.9.0 补上 Windows「单键盘」场景：系统里只装了中文输入法（没有英语 1033 键盘
 布局）时，旧的双键盘方案完全失效，只能打日志提示用户去装英语键盘。本版本实现
 `SingleKeyboardStrategy`，通过向前台窗口注入 IME 切换热键（Shift / Ctrl+Space）在
 同一个输入法内部切换中 / 英。
