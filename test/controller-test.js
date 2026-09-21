@@ -69,6 +69,25 @@ function makeAnalyzer(fastResult, astResult) {
         async isCursorInCommentOrString() { stats.astCalled++; return astResult; },
     };
 }
+// 巡检 C3：分析器抛错不得变成未处理 rejection（扩展宿主会静默崩掉这一轮判定）
+function makeThrowingAnalyzer(mode) {
+    const stats = { fastCalled: 0, astCalled: 0 };
+    return {
+        stats,
+        init() {},
+        dispose() {},
+        isCursorInCommentFast() {
+            stats.fastCalled++;
+            if (mode === 'fast-throw') throw new Error('boom-fast');
+            return null;
+        },
+        isCursorInCommentOrString() {
+            stats.astCalled++;
+            if (mode === 'ast-reject') return Promise.reject(new Error('boom-ast'));
+            return Promise.resolve({ match: false, type: null });
+        },
+    };
+}
 function makeTracker() {
     const state = { manualOverride: false, lastLine: -1, autoSwitches: [], syncs: 0 };
     return {
@@ -119,20 +138,24 @@ function makeEditor(languageId = 'typescript', line = 0, lineCount = 10) {
 const IMEController = loadController();
 let testCount = 0, passCount = 0, failCount = 0;
 const queue = [];
+const unhandledRejections = [];
 function test(name, fn) { queue.push({ name, fn }); }
 
-function build({ fast = null, ast = { match: false, type: null }, manualOverride = false } = {}) {
+function build({ fast = null, ast = { match: false, type: null }, manualOverride = false, analyzer = null } = {}) {
     const adapter = makeAdapter();
-    const analyzer = makeAnalyzer(fast, ast);
+    const analyzerImpl = analyzer || makeAnalyzer(fast, ast);
     const tracker = makeTracker();
     tracker.state.manualOverride = manualOverride;
     const statusBar = makeStatusBar();
     const logger = makeLogger();
-    const controller = new IMEController(adapter, analyzer, tracker, statusBar, logger);
-    return { adapter, analyzer, tracker, statusBar, logger, controller };
+    const controller = new IMEController(adapter, analyzerImpl, tracker, statusBar, logger);
+    return { adapter, analyzer: analyzerImpl, tracker, statusBar, logger, controller };
 }
 
 async function run() {
+    // 捕获本轮任何未处理 rejection（修复前：doAnalyze 抛错会逸出到进程级）
+    process.on('unhandledRejection', (reason) => unhandledRejections.push(String(reason && reason.message ? reason.message : reason)));
+
     console.log('═══════════════════════════════════════');
     console.log('  IMEController 行为测试（真实源码）');
     console.log('═══════════════════════════════════════\n');
@@ -237,6 +260,26 @@ async function run() {
         controller.dispose();
         await sleep(30);
         assert.ok(true, 'dispose 后不应再抛错');
+    });
+
+    // ---- 巡检 C3：分析器异常不得逸出为未处理 rejection ----
+    test('AST 分析 reject → 记错误日志，不抛到进程', async () => {
+        const { logger, controller } = build({ analyzer: makeThrowingAnalyzer('ast-reject') });
+        await controller.analyzeAndSwitch(makeEditor());
+        await sleep(60);
+        assert.ok(logger.lines.some((l) => l.includes('boom-ast')), '应以 ERROR 记录分析失败');
+    });
+
+    test('快路径同步抛错 → analyzeAndSwitch 不向外抛', async () => {
+        const { logger, controller } = build({ analyzer: makeThrowingAnalyzer('fast-throw') });
+        await controller.analyzeAndSwitch(makeEditor());
+        await sleep(60);
+        assert.ok(logger.lines.some((l) => l.includes('boom-fast')), '应以 ERROR 记录调度/分析失败');
+    });
+
+    test('全程无未处理 Promise rejection（C3 锁行为）', async () => {
+        await sleep(20);
+        assert.deepStrictEqual(unhandledRejections, [], `不应出现未处理 rejection：${unhandledRejections.join(' / ')}`);
     });
 
     for (const item of queue) {

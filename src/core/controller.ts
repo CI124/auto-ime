@@ -19,6 +19,10 @@ import { IAnalyzer, IPlatformAdapter, SwitchResult } from './types';
 import { IMEStateTracker } from './state-tracker';
 import { LogSink } from '../infra/logger';
 
+function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
 export class IMEController {
     private adapter: IPlatformAdapter;
     private analyzer: IAnalyzer;
@@ -72,22 +76,36 @@ export class IMEController {
      * 大小做 10/30/60ms 尾随防抖，只真正分析最后一批，避免重复的 AST 解析。
      * （generation 取消机制仍会丢弃过期解析结果，二者互补。）
      * 由模式监听器在游标上下文可能变化时调用。
+     *
+     * 本方法【不得抛出、不得产生未处理 rejection】：调用方（normal/vim 监听器与定时器）
+     * 都是 fire-and-forget，一旦逸出会静默丢掉这一轮判定并在扩展宿主留下 unhandledRejection。
      */
     async analyzeAndSwitch(editor: vscode.TextEditor): Promise<void> {
-        const scheme = editor.document.uri.scheme;
-        if (scheme !== 'file' && scheme !== 'untitled') return; // 非代码文档无需排队
+        try {
+            const scheme = editor.document.uri.scheme;
+            if (scheme !== 'file' && scheme !== 'untitled') return; // 非代码文档无需排队
 
-        this.pendingEditor = editor;
-        if (this.analysisTimer === null) {
-            const lines = editor.document.lineCount;
-            const delay = lines < 500 ? 10 : lines < 2000 ? 30 : 60;
-            this.analysisTimer = setTimeout(() => {
-                this.analysisTimer = null;
-                const ed = this.pendingEditor;
-                this.pendingEditor = null;
-                if (ed) void this.doAnalyze(ed);
-            }, delay);
+            this.pendingEditor = editor;
+            if (this.analysisTimer === null) {
+                const lines = editor.document.lineCount;
+                const delay = lines < 500 ? 10 : lines < 2000 ? 30 : 60;
+                this.analysisTimer = setTimeout(() => {
+                    this.analysisTimer = null;
+                    const ed = this.pendingEditor;
+                    this.pendingEditor = null;
+                    if (ed) this.runAnalysis(ed);
+                }, delay);
+            }
+        } catch (error) {
+            this.logger.error(`[Analyze] 调度失败: ${errorMessage(error)}`);
         }
+    }
+
+    /** 防抖定时器里唯一的调用点：把 doAnalyze 的 rejection 就地消化 */
+    private runAnalysis(editor: vscode.TextEditor): void {
+        this.doAnalyze(editor).catch((error) => {
+            this.logger.error(`[Analyze] 分析失败，本轮不切换: ${errorMessage(error)}`);
+        });
     }
 
     /** 真正的分析 + 切换（被 analyzeAndSwitch 防抖后调用） */
