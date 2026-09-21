@@ -7,6 +7,72 @@
 
 ## [未发布]
 
+### 第三轮：建立工程门禁 + 5 项正确性/体验修复（基线 commit `1773e30` 之后）
+
+#### 新增
+
+- **粒度/复杂度门禁** `scripts/check-granularity.js`（`npm run lint`）：基于 `ts.createSourceFile`
+  真 AST 统计文件行数/函数行数/分支数/嵌套深度/参数个数；`src/` 五维全硬（400/60、60/100、
+  12/15、4/5、5/6），`test/`、`scripts/` 只硬校文件行数与参数。零新增依赖（复用已有 typescript）
+- **仓库自检门禁** `scripts/verify-repo.js`：断言 CI 定义、`src/**`、`scripts.test` 引用的测试文件、
+  `docs/adr/` 均已入库 —— `.gitignore` 是白名单模式，漏放行会静默让 fresh clone 编译不过
+- **wasm 完整性门禁** `scripts/verify-wasm.js` + 清单单一来源 `scripts/wasm-manifest.js`：校验
+  SHA-256，并双向核对 `LANGUAGE_PROFILES` 与清单（漏登记 / 死配置都失败）
+- **`ValuePoller.pause()` / `resume()`** 与 `IPlatformAdapter.setObserving?`：窗口失焦时暂停外部
+  切换轮询（Linux 探针每 100ms 是一个 bash 子进程），恢复焦点后补报一次真实切换
+- **`IAnalyzer.supports(languageId)`**：区分“确认不是注释”与“我不知道”
+- **`auto-ime.activated` 键位闸门**：两条键位的 `when` 均受其约束，激活失败时 ESC /
+  `Ctrl+Shift+Space` 回落给宿主而不是被吞掉
+- **测试新增/重写 4 套（共 162 用例）**：`poller-test.js`(7)、`controller-test.js`(16)、
+  `vim-mode-test.js`(7)、重写 `ast-analyzer-test.js`(27)，均用 esbuild 内存打包加载**真实源码**
+- `npm test` 聚合七套；`.github/workflows/ci.yml` 增加 self-check、verify-wasm、lint 步骤
+- **`docs/adr/` 架构决策记录 6 条**（0001 仓库自检、0002 wasm 不入库、0003 全量解析、
+  0004 粒度门禁与阈值、0005 未登记语言不干预、0006 失焦暂停轮询）+ `docs/baseline-granularity.json`
+
+#### 修复
+
+- **AST 判定错位（高危）**：取消未传 `tree.edit()` 的“增量解析”。实测：游标上方插入 3 行后
+  注释节点退化为 `"functio"@0:0`（真值 `"// head"@3:0`）；而 `lastTree` 是实例级单槽，
+  跨文件/跨语言必然复用，且跨语法复用不抛异常，原本“失败降级全量”的 catch 分支永不触发。
+  同时把 `tree.delete()` 移到扫描之后（`query.matches()` 的节点仍持有树内存）
+- **块注释快路径假阳性**：`const re = "/*";` 之后的代码行会被直接判为注释并跳过 AST；
+  现在标记所在行引号不成对时不下结论
+- **热路径未处理 rejection**：`analyzeAndSwitch` 全程 try/catch，`doAnalyze` 的 rejection
+  转成一条 ERROR 日志与“本轮不切换”（修复前实测两条异常直接逸出到进程）
+- **写中文被抢切**：markdown / plaintext / jsonc 等未登记语言不再被当成“代码”强制切回英文，
+  而是整轮不干预
+- **Vim `modeDetectionTimer` 泄漏**：`register()` 返回的 disposables 内登记清定时器
+- **`.gitignore` 白名单漏放行**：`.github/`、`docs/`、`src/core/poller.ts`、两个测试文件
+  此前均未入库，因此上一轮声称“已建立 CI”事实上从未在远端跑过一次
+
+#### 变更
+
+- `scripts/check-env.js` 退出 `precompile`/`prewatch` 链路（它在 Linux 无 IME daemon 时
+  `exit 1`，会把无头 CI runner 的构建直接刷红）；修正其 D-Bus / `NullManager` 过期文案
+- Linux 适配器按职责拆分：`platforms/linux/shell.ts`（bash 执行原语）与
+  `platforms/linux/fcitx5-profile.ts`（profile 解析），`adapter.ts` 448 → 357 行
+- `npm test` 七套；`npm run lint` / `verify-repo` / `verify-wasm` 新入口
+- 文档全面对齐代码现状：`CONTRIBUTING.md`（结构树、模块职责、错误处理不变式、门禁与 ADR
+  流程、新语言四步流程、单键盘已接入、imm32/NullManager/不存在的 TODO 等漂移全部修正）、
+  `README.md` / `README_EN.md`（“增量解析 3x 提速”等已不成立的宣传、测试用例数、工作原理步骤）
+
+#### 验证
+
+- `npx tsc --noEmit` 0 错误；`npm run lint` OK（32 文件 / 749 函数）；`npm audit` 0 漏洞
+- `npm test` 七套全绿 162/162（ast 27、controller 16、poller 7、vim 7、koffi 31、tsf 18、linux 56）
+- `git clone` 自检：fresh clone 已可拿到 CI 定义、全部源码与七个测试脚本
+- 门禁有效性实测：放入 7 参数 + 6 层嵌套的文件能阻断；启发式识别数低于下限时自行失败
+
+#### 已知残留（本轮有意不做，已记录）
+
+- `mock-*.js` 仍以 `dist/extension.js` 文本与函数顺序为断言对象（锁死命名，妨碍重构），
+  迁移到行为断言留待下轮；`src/` 三处软档提示（`isCursorInCommentFast` 嵌套 5、
+  `doAnalyze` 63 行/14 分支、`vim.register` 85 行）是下轮热点；覆盖率/变异测试未引入；
+  Linux 切换仍走同步 `execFileSync`（改异步要动 `IPlatformAdapter` 契约）；
+  单键盘状态漂移无自愈入口；macOS 无适配器。
+
+---
+
 ### 修复
 
 - **`src/extension.ts`**：`ASTAnalyzer` 实例注册进 `context.subscriptions`，扩展停用时

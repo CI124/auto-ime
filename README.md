@@ -15,7 +15,7 @@
 - **ESC 强制切换**：Vim 模式下按 ESC 退回 Normal 模式时强制切换到英文输入法
 - **状态栏显示**：右下角状态栏实时显示当前输入法状态，支持点击切换
 - **多语言支持**：JavaScript、TypeScript、Python、Go、Rust、C、C++、CSS、HTML、Lua、Java、Kotlin、Bash
-- **高性能**：Tree-sitter WASM 增量解析 + 同步文本快速检测 + 动态防抖响应
+- **高性能**：同步文本快速路径 + Tree-sitter WASM 解析 + 事件级防抖（10–60ms）
 - **模块化架构**：平台无关的核心逻辑 + 平台特定的适配器，易于扩展
 
 ## 支持的语言和注释类型
@@ -99,13 +99,16 @@ code --install-extension auto-ime-0.8.1.vsix
 
 ## 工作原理
 
-1. **事件监听**：模式监听器（Normal/Vim）监听光标和文档变化
-2. **快速路径**：同步文本检测行注释和块注释
-3. **AST 解析**：Tree-sitter 增量解析，判断光标在注释/字符串/代码中
-4. **切换决策**：只在注释中切换中文，字符串不干预
-5. **平台切换**：适配器执行实际切换（Linux: shell 命令，Windows: 键盘布局或 IME 热键）
-6. **外部切换检测**：Linux 通过自适应轮询检测（100-500ms）；Windows 单键盘模式无跨进程读取，靠内部状态跟踪
-7. **状态栏更新**：乐观更新显示
+1. **能力判定**：只对已登记语法的语言出手；markdown / plaintext 等未登记语言**完全不干预**
+2. **事件监听**：模式监听器（Normal/Vim）监听光标和文档变化
+3. **快速路径**：同步文本检测行注释和块注释（不确定时交给 AST）
+4. **AST 解析**：Tree-sitter 解析整篇文档，判断光标在注释/字符串/代码中
+5. **切换决策**：只在注释中切换中文，字符串不干预
+6. **平台切换**：适配器执行实际切换（Linux: shell 命令，Windows: 键盘布局或 IME 热键）
+7. **外部切换检测**：Linux 自适应轮询（活跃 100ms / 空闲 500ms），Windows 双键盘轮询
+   Language ID；**窗口失焦时暂停轮询**，重新获得焦点后补报一次外部切换；
+   Windows 单键盘模式无法跨进程读取状态，靠内部状态跟踪
+8. **状态栏更新**：乐观更新显示
 
 ## 开发
 
@@ -118,10 +121,15 @@ npm run watch        # 监听模式
 ### 测试
 
 ```bash
-node test/mock-koffi-test.js      # Windows (33 用例)
-node test/mock-tsf-test.js        # Windows 单键盘 (16 用例)
-node test/mock-linux-ime-test.js  # Linux (56 用例)
-node test/ast-analyzer-test.js    # AST (59 用例)
+npm test                        # 全部七套（带 pretest 重新构建 bundle）
+npm run lint                    # 粒度 / 复杂度门禁
+node test/poller-test.js        # 轮询原语 (7 用例)
+node test/controller-test.js    # 切换决策状态机 (16 用例)
+node test/ast-analyzer-test.js  # AST 分析器 (27 用例)
+node test/vim-mode-test.js      # Vim 模式监听 (7 用例)
+node test/mock-koffi-test.js    # Windows 双键盘 (31 用例)
+node test/mock-tsf-test.js      # Windows 单键盘 (18 用例)
+node test/mock-linux-ime-test.js # Linux (56 用例)
 ```
 
 ## 常见问题
@@ -132,7 +140,8 @@ node test/ast-analyzer-test.js    # AST (59 用例)
 **输入法没切换**：Linux 确认 Fcitx5/IBus 正在运行。Windows 单键盘模式确认
 `auto-ime.windows.toggleKey` 与输入法自身的切换热键一致（微软拼音默认 Shift）。
 
-**性能问题**：动态防抖（10-60ms）+ 增量解析（3x 提速）+ 快速路径检测。
+**性能问题**：事件级防抖（10–60ms）+ 同步文本快速路径 + 文档文本缓存；窗口失焦时不轮询。
+解析为全量而非增量（见 `docs/adr/0003`），已被防抖与 generation 取消掩盖。
 
 ## 许可证
 

@@ -15,7 +15,7 @@ An intelligent input method auto-switching extension for **Linux** and **Windows
 - **ESC force switch**: Vim ESC forces English input in Normal mode
 - **Status bar**: Bottom-right status bar shows current IME state, click to toggle
 - **Multi-language**: JavaScript, TypeScript, Python, Go, Rust, C, C++, CSS, HTML, Lua, Java, Kotlin, Bash
-- **High performance**: Tree-sitter WASM incremental parsing + synchronous fast detection + dynamic debounce
+- **High performance**: synchronous fast path + Tree-sitter WASM parsing + event-level debounce (10-60ms)
 - **Modular architecture**: Platform-agnostic core + platform-specific adapters
 
 ## Supported Languages
@@ -98,13 +98,14 @@ code --install-extension auto-ime-0.8.1.vsix
 
 ## How It Works
 
-1. **Event listening**: Mode listeners (Normal/Vim) monitor cursor and document changes
-2. **Fast path**: Synchronous text detection for line/block comments
-3. **AST parsing**: Tree-sitter incremental parsing, determines comment/string/code context
-4. **Switch decision**: Only switches to Chinese in comments, strings unchanged
-5. **Platform switch**: Adapter executes actual switch (Linux: shell commands, Windows: keyboard layout or IME hotkey)
-6. **External switch detection**: Linux via adaptive polling (100-500ms); Windows single-keyboard has no cross-process read, relies on tracked state
-7. **Status bar**: Optimistic display update
+1. **Capability check**: only languages with a registered grammar are touched; unregistered ones (markdown / plaintext, ...) are **left completely alone**
+2. **Event listening**: Mode listeners (Normal/Vim) monitor cursor and document changes
+3. **Fast path**: Synchronous text detection for line/block comments (falls back to AST when unsure)
+4. **AST parsing**: Tree-sitter parses the whole document to classify comment/string/code
+5. **Switch decision**: Only switches to Chinese in comments, strings unchanged
+6. **Platform switch**: Adapter executes actual switch (Linux: shell commands, Windows: keyboard layout or IME hotkey)
+7. **External switch detection**: Linux adaptive polling (100ms active / 500ms idle), Windows dual-keyboard polls the Language ID; **polling is paused while the window is unfocused** and the switch made meanwhile is reported once on refocus. Windows single-keyboard has no cross-process read, relies on tracked state
+8. **Status bar**: Optimistic display update
 
 ## Development
 
@@ -117,10 +118,15 @@ npm run watch        # Watch mode
 ### Tests
 
 ```bash
-node test/mock-koffi-test.js      # Windows (33 cases)
-node test/mock-tsf-test.js        # Windows single keyboard (16 cases)
-node test/mock-linux-ime-test.js  # Linux (56 cases)
-node test/ast-analyzer-test.js    # AST (59 cases)
+npm test                         # all seven suites (pretest rebuilds the bundle)
+npm run lint                     # granularity / complexity gates
+node test/poller-test.js         # polling primitive (7 cases)
+node test/controller-test.js     # switching state machine (16 cases)
+node test/ast-analyzer-test.js   # AST analyzer (27 cases)
+node test/vim-mode-test.js       # Vim mode listener (7 cases)
+node test/mock-koffi-test.js     # Windows dual keyboard (31 cases)
+node test/mock-tsf-test.js       # Windows single keyboard (18 cases)
+node test/mock-linux-ime-test.js # Linux (56 cases)
 ```
 
 ## FAQ
@@ -129,7 +135,7 @@ node test/ast-analyzer-test.js    # AST (59 cases)
 
 **IME not switching**: Linux: verify Fcitx5/IBus is running. Windows single-keyboard: ensure `auto-ime.windows.toggleKey` matches your IME's toggle hotkey (Microsoft Pinyin default is Shift).
 
-**Performance**: Dynamic debounce (10-60ms) + incremental parsing (3x faster) + fast path detection.
+**Performance**: event-level debounce (10-60ms) + synchronous fast path + document text cache; no polling at all while the window is unfocused. Parsing is full rather than incremental (see `docs/adr/0003`), which the debounce and generation cancellation keep invisible.
 
 ## License
 
