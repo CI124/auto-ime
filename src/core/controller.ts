@@ -15,22 +15,24 @@
  */
 
 import * as vscode from 'vscode';
-import { ASTAnalyzer } from '../ASTAnalyzer';
-import { IPlatformAdapter, SwitchResult } from './types';
+import { IAnalyzer, IPlatformAdapter, SwitchResult } from './types';
 import { IMEStateTracker } from './state-tracker';
-import { LogSink } from '../logger';
+import { LogSink } from '../infra/logger';
 
 export class IMEController {
     private adapter: IPlatformAdapter;
-    private analyzer: ASTAnalyzer;
+    private analyzer: IAnalyzer;
     private stateTracker: IMEStateTracker;
     private logger: LogSink;
     private currentMode: 'en' | 'zh' = 'en';
     private statusBarItem: vscode.StatusBarItem;
+    // 事件级防抖：合并同一次操作触发的多次事件（见 analyzeAndSwitch）
+    private analysisTimer: ReturnType<typeof setTimeout> | null = null;
+    private pendingEditor: vscode.TextEditor | null = null;
 
     constructor(
         adapter: IPlatformAdapter,
-        analyzer: ASTAnalyzer,
+        analyzer: IAnalyzer,
         stateTracker: IMEStateTracker,
         statusBarItem: vscode.StatusBarItem,
         logger: LogSink,
@@ -66,10 +68,30 @@ export class IMEController {
     }
 
     /**
-     * Core analysis + switch flow
-     * Called by mode listeners when cursor context may have changed
+     * 事件级防抖：同一次用户操作会先后触发 selection / document 事件，这里按文件
+     * 大小做 10/30/60ms 尾随防抖，只真正分析最后一批，避免重复的 AST 解析。
+     * （generation 取消机制仍会丢弃过期解析结果，二者互补。）
+     * 由模式监听器在游标上下文可能变化时调用。
      */
     async analyzeAndSwitch(editor: vscode.TextEditor): Promise<void> {
+        const scheme = editor.document.uri.scheme;
+        if (scheme !== 'file' && scheme !== 'untitled') return; // 非代码文档无需排队
+
+        this.pendingEditor = editor;
+        if (this.analysisTimer === null) {
+            const lines = editor.document.lineCount;
+            const delay = lines < 500 ? 10 : lines < 2000 ? 30 : 60;
+            this.analysisTimer = setTimeout(() => {
+                this.analysisTimer = null;
+                const ed = this.pendingEditor;
+                this.pendingEditor = null;
+                if (ed) void this.doAnalyze(ed);
+            }, delay);
+        }
+    }
+
+    /** 真正的分析 + 切换（被 analyzeAndSwitch 防抖后调用） */
+    private async doAnalyze(editor: vscode.TextEditor): Promise<void> {
         const document = editor.document;
 
         // Skip non-code documents (output panels, diff views, etc.)
@@ -95,7 +117,7 @@ export class IMEController {
             }
         }
 
-        this.stateTracker.updatePosition(position.line, position.character);
+        this.stateTracker.updatePosition(position.line);
 
         // Fast path: text-based comment detection (synchronous, no AST cost)
         const fastResult = this.analyzer.isCursorInCommentFast(document, position, lang);
@@ -145,17 +167,9 @@ export class IMEController {
      * Toggle IME (user manual trigger via status bar)
      */
     toggleIME(): void {
-        if (this.currentMode === 'zh') {
-            this.adapter.switchToEnglish();
-            this.updateStatusBar('en');
-            this.stateTracker.notifyAutoSwitch('en');
-            this.logger.info('[StatusBar] User toggled to English');
-        } else {
-            this.adapter.switchToChinese();
-            this.updateStatusBar('zh');
-            this.stateTracker.notifyAutoSwitch('zh');
-            this.logger.info('[StatusBar] User toggled to Chinese');
-        }
+        const target: 'zh' | 'en' = this.currentMode === 'zh' ? 'en' : 'zh';
+        this.switchTo(target);
+        this.logger.info(`[StatusBar] User toggled to ${target === 'zh' ? 'Chinese' : 'English'}`);
         this.stateTracker.markManualSwitch();
     }
 
@@ -180,7 +194,12 @@ export class IMEController {
         }
 
         if (result.method !== 'skip') {
-            this.logger.debug(`[Controller] switch to ${mode}: ${result.method} (${result.elapsedMs ?? 0}ms)`);
+            if (result.success) {
+                this.logger.debug(`[Controller] switch to ${mode}: ${result.method} (${result.elapsedMs ?? 0}ms)`);
+            } else {
+                // 消费 success：适配器显式报告失败时留下告警，便于定位切换无效
+                this.logger.warn(`[Controller] switch to ${mode} FAILED (method=${result.method})`);
+            }
         }
     }
 
@@ -202,5 +221,14 @@ export class IMEController {
 
     private isInInsertMode(editor: vscode.TextEditor): boolean {
         return this._isInInsertMode(editor);
+    }
+
+    /** 释放：清理待执行的防抖定时器（扩展 deactivate 时调用） */
+    dispose(): void {
+        if (this.analysisTimer) {
+            clearTimeout(this.analysisTimer);
+            this.analysisTimer = null;
+        }
+        this.pendingEditor = null;
     }
 }

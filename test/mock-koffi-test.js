@@ -6,6 +6,14 @@
 
 const assert = require('assert');
 const Module = require('module');
+const os = require('os');
+
+// 扩展输出面板的所有日志行（用于端到端断言）
+const outputLines = [];
+
+function logged(substr) {
+    return outputLines.some((l) => l.includes(substr));
+}
 
 // ============================================================
 // Mock 状态（可注入控制测试场景）
@@ -13,9 +21,6 @@ const Module = require('module');
 const mockState = {
     foregroundHwnd: 0x00010001n,
     currentLangId: 1033,
-    immConversionMode: 0x0000,
-    immOpenStatus: false,
-    immContextValid: true,
     installedLayouts: [1033, 2052],
     callLog: [],
 };
@@ -27,9 +32,6 @@ function logCall(name, ...args) {
 function resetMock() {
     mockState.foregroundHwnd = 0x00010001n;
     mockState.currentLangId = 1033;
-    mockState.immConversionMode = 0x0000;
-    mockState.immOpenStatus = false;
-    mockState.immContextValid = true;
     mockState.installedLayouts = [1033, 2052];
     mockState.callLog = [];
 }
@@ -43,7 +45,7 @@ function createMockKoffi() {
             logCall('GetForegroundWindow');
             return mockState.foregroundHwnd;
         },
-        'DWORD __stdcall GetWindowThreadProcessId(HWND, DWORD*)': (hwnd, outPid) => {
+        'DWORD __stdcall GetWindowThreadProcessId(HWND, _Out_ DWORD*)': (hwnd, outPid) => {
             logCall('GetWindowThreadProcessId');
             if (Array.isArray(outPid)) outPid[0] = 1234;
             return 5678;
@@ -63,50 +65,23 @@ function createMockKoffi() {
             }
             return layouts.length;
         },
-        'LRESULT __stdcall SendMessageW(HWND, UINT, WPARAM, LPARAM)': (hwnd, msg, wparam, lparam) => {
-            logCall('SendMessageW');
-            mockState.currentLangId = Number(lparam);
-            return 0n;
+        'BOOL __stdcall PostMessageW(HWND, UINT, WPARAM, LPARAM)': (hwnd, msg, wparam, lparam) => {
+            logCall('PostMessageW');
+            // WM_INPUTLANGCHANGEREQUEST: 前台窗口接受布局切换请求
+            if (msg === 0x0050) mockState.currentLangId = Number(lparam);
+            return 1;
         },
         'BOOL __stdcall AttachThreadInput(DWORD, DWORD, BOOL)': () => {
             logCall('AttachThreadInput');
             return 1;
         },
+    };
+
+    // kernel32.dll：GetCurrentThreadId 真正的宿主（src 从 kernel32 绑定）
+    const kernel32Funcs = {
         'DWORD __stdcall GetCurrentThreadId()': () => {
             logCall('GetCurrentThreadId');
             return 9999;
-        },
-    };
-
-    const imm32Funcs = {
-        'void* __stdcall ImmGetContext(HWND)': (hwnd) => {
-            logCall('ImmGetContext');
-            return mockState.immContextValid ? 0x10001n : 0n;
-        },
-        'BOOL __stdcall ImmReleaseContext(HWND, void*)': () => {
-            logCall('ImmReleaseContext');
-            return 1;
-        },
-        'BOOL __stdcall ImmGetConversionStatus(void*, uint32_t*, uint32_t*)': (ctx, conv, sent) => {
-            logCall('ImmGetConversionStatus');
-            if (!mockState.immContextValid) return 0;
-            if (Array.isArray(conv)) conv[0] = mockState.immConversionMode;
-            if (Array.isArray(sent)) sent[0] = 0;
-            return 1;
-        },
-        'BOOL __stdcall ImmSetConversionStatus(void*, uint32_t, uint32_t)': (ctx, conv, sent) => {
-            logCall('ImmSetConversionStatus');
-            mockState.immConversionMode = conv;
-            return 1;
-        },
-        'BOOL __stdcall ImmGetOpenStatus(void*)': () => {
-            logCall('ImmGetOpenStatus');
-            return mockState.immOpenStatus ? 1 : 0;
-        },
-        'BOOL __stdcall ImmSetOpenStatus(void*, BOOL)': (ctx, open) => {
-            logCall('ImmSetOpenStatus');
-            mockState.immOpenStatus = !!open;
-            return 1;
         },
     };
 
@@ -123,7 +98,7 @@ function createMockKoffi() {
         load: (dllName) => {
             logCall('koffi.load', dllName);
             if (dllName === 'user32.dll') return createMockDll(user32Funcs);
-            if (dllName === 'imm32.dll') return createMockDll(imm32Funcs);
+            if (dllName === 'kernel32.dll') return createMockDll(kernel32Funcs);
             if (dllName === 'ole32.dll') return createMockDll({});
             throw new Error(`Unknown DLL: ${dllName}`);
         },
@@ -171,7 +146,7 @@ Module._load = function(request, parent, isMain) {
             extensions: { getExtension: () => null },
             window: {
                 activeTextEditor: null,
-                createOutputChannel: () => ({ appendLine: () => {}, dispose: () => {} }),
+                createOutputChannel: () => ({ appendLine: (m) => outputLines.push(String(m)), dispose: () => {} }),
                 createStatusBarItem: () => ({
                     text: '', tooltip: '', backgroundColor: undefined,
                     show: () => {}, dispose: () => {}, command: '',
@@ -205,21 +180,33 @@ Module._load = function(request, parent, isMain) {
 };
 
 // ============================================================
-// 测试框架
+// 测试框架（支持异步用例：全部等待完后再汇总）
 // ============================================================
 let testCount = 0, passCount = 0, failCount = 0;
+const pendingTests = [];
 
 function test(name, fn) {
     testCount++;
-    try {
-        fn();
-        passCount++;
-        console.log(`  ✅ ${name}`);
-    } catch (e) {
+    const fail = (e) => {
         failCount++;
         console.log(`  ❌ ${name}`);
         console.log(`     ${e.message}`);
+    };
+    let result;
+    try {
+        result = fn();
+    } catch (e) {
+        return fail(e);
     }
+    if (result && typeof result.then === 'function') {
+        pendingTests.push(result.then(
+            () => { passCount++; console.log(`  ✅ ${name}`); },
+            fail
+        ));
+        return;
+    }
+    passCount++;
+    console.log(`  ✅ ${name}`);
 }
 
 // ============================================================
@@ -232,7 +219,6 @@ console.log('══════════════════════�
 
 // 加载编译后的扩展
 const ext = require('../dist/extension');
-const mockChannel = { appendLine: () => {} };
 
 // ---- 测试 1: 扩展激活 ----
 console.log('\n📦 测试 1: 扩展激活');
@@ -248,20 +234,22 @@ test('deactivate 函数存在', () => {
 // ---- 测试 2: 扩展完整激活流程 ----
 console.log('\n📦 测试 2: 扩展完整激活流程');
 
-test('activate 可成功执行', async () => {
+test('activate 完成全部接线（适配器/分析器/状态栏/命令/监听器）', async () => {
     resetMock();
-    mockState.immConversionMode = 0x0001; // 中文模式
+    outputLines.length = 0;
     const mockContext = {
         subscriptions: [],
-        extensionPath: '/home/honor/Desktop/ime',
+        extensionPath: require('path').join(__dirname, '..'),
+        globalStorageUri: { fsPath: os.tmpdir() },
     };
-    try {
-        await ext.activate(mockContext);
-        assert.ok(true, 'activate 成功');
-    } catch (e) {
-        // 可能因为 vscode mock 不完整而失败，但核心逻辑已执行
-        console.log(`     (activate 报错但核心逻辑已覆盖: ${e.message.substring(0, 80)})`);
-    }
+    await ext.activate(mockContext);
+
+    assert.ok(!logged('FATAL'), `激活不应出现 FATAL：${outputLines.filter((l) => l.includes('FATAL')).join(' / ')}`);
+    assert.ok(logged('Strategy: dual-keyboard'), '应选中双键盘策略');
+    assert.ok(logged('AST Analyzer initialized'), 'Tree-sitter 分析器必须完成初始化');
+    assert.ok(logged('mode listeners registered'), '模式监听器应注册完成');
+    assert.ok(logged('Adapter polls external switches') || logged('Polling Language ID'), '应开始外部切换检测');
+    assert.ok(mockContext.subscriptions.length >= 5, `subscriptions 应持有状态栏/分析器/命令/监听器，实际 ${mockContext.subscriptions.length}`);
 });
 
 // ---- 测试 3: 直接测试编译后的内部函数 ----
@@ -294,9 +282,10 @@ test('bundle 包含控制器和状态追踪器', () => {
     assert.ok(bundleSrc.includes('IMEStateTracker') || bundleSrc.includes('stateTracker') || bundleSrc.includes('StateTracker'), '应包含状态追踪器');
 });
 
-test('bundle 包含三层切换策略', () => {
-    // layout=双键盘布局切换, imm32=IMM32 回退, toggle=单键盘 IME 热键切换
-    assert.ok(bundleSrc.includes('imm32') && bundleSrc.includes('layout'), '应包含 imm32 与 layout 策略');
+test('bundle 包含两种切换策略', () => {
+    // layout=双键盘布局切换, toggle=单键盘 IME 热键切换（IMM32 转换状态写回已移除）
+    assert.ok(bundleSrc.includes('layout'), '应包含 layout 策略');
+    assert.ok(bundleSrc.includes('toggle'), '应包含 toggle 策略');
     assert.ok(bundleSrc.includes('sendImeToggle') || bundleSrc.includes('keybd_event'), '应包含单键盘热键切换');
 });
 
@@ -324,39 +313,12 @@ test('Mock user32.GetForegroundWindow 返回句柄', () => {
     assert.strictEqual(hwnd, mockState.foregroundHwnd);
 });
 
-test('Mock imm32.ImmGetConversionStatus 读取模式', () => {
+test('Mock user32.GetKeyboardLayout 返回当前布局', () => {
     resetMock();
-    mockState.immConversionMode = 0x0001; // NATIVE
-    const imm32 = mockKoffi.load('imm32.dll');
-    const conv = [0];
-    const sent = [0];
-    const ok = imm32.func('BOOL __stdcall ImmGetConversionStatus(void*, uint32_t*, uint32_t*)')(0x10001n, conv, sent);
-    assert.strictEqual(ok, 1);
-    assert.strictEqual(conv[0] & 0x0001, 1); // NATIVE bit
-});
-
-test('Mock imm32.ImmSetConversionStatus 切换到英文', () => {
-    resetMock();
-    mockState.immConversionMode = 0x0001;
-    const imm32 = mockKoffi.load('imm32.dll');
-    imm32.func('BOOL __stdcall ImmSetConversionStatus(void*, uint32_t, uint32_t)')(0x10001n, 0x0000, 0);
-    assert.strictEqual(mockState.immConversionMode, 0);
-});
-
-test('Mock imm32.ImmSetConversionStatus 切换到中文', () => {
-    resetMock();
-    mockState.immConversionMode = 0x0000;
-    const imm32 = mockKoffi.load('imm32.dll');
-    imm32.func('BOOL __stdcall ImmSetConversionStatus(void*, uint32_t, uint32_t)')(0x10001n, 0x0001, 0);
-    assert.strictEqual(mockState.immConversionMode, 1);
-});
-
-test('Mock ImmGetContext 无效时返回 0', () => {
-    resetMock();
-    mockState.immContextValid = false;
-    const imm32 = mockKoffi.load('imm32.dll');
-    const ctx = imm32.func('void* __stdcall ImmGetContext(HWND)')(0x10001n);
-    assert.strictEqual(ctx, 0n);
+    mockState.currentLangId = 2052;
+    const user32 = mockKoffi.load('user32.dll');
+    const hkl = user32.func('HKL __stdcall GetKeyboardLayout(DWORD)')(5678);
+    assert.strictEqual(Number(hkl), 2052);
 });
 
 test('Mock GetKeyboardLayoutList 枚举布局', () => {
@@ -366,60 +328,46 @@ test('Mock GetKeyboardLayoutList 枚举布局', () => {
     assert.strictEqual(count, 2);
 });
 
-test('Mock SendMessageW 切换键盘布局', () => {
+test('Mock PostMessageW 切换键盘布局', () => {
     resetMock();
     mockState.currentLangId = 1033;
     const user32 = mockKoffi.load('user32.dll');
-    user32.func('LRESULT __stdcall SendMessageW(HWND, UINT, WPARAM, LPARAM)')(0x10001n, 0x0050, 0n, 2052n);
+    user32.func('BOOL __stdcall PostMessageW(HWND, UINT, WPARAM, LPARAM)')(0x10001n, 0x0050, 0n, 2052n);
     assert.strictEqual(mockState.currentLangId, 2052);
 });
 
 // ---- 测试 6: 完整切换流程模拟 ----
-console.log('\n📦 测试 6: 完整切换流程模拟');
+console.log('\n📦 测试 6: 完整切换流程模拟（键盘布局）');
 
 test('模拟: 英文 → 中文 → 英文 完整流程', () => {
     resetMock();
-    mockState.immConversionMode = 0x0000; // 初始英文
-
-    const imm32 = mockKoffi.load('imm32.dll');
     const user32 = mockKoffi.load('user32.dll');
+    const getLayout = user32.func('HKL __stdcall GetKeyboardLayout(DWORD)');
+    const postSwitch = user32.func('BOOL __stdcall PostMessageW(HWND, UINT, WPARAM, LPARAM)');
 
-    // 1. 查询当前模式
-    let conv = [0], sent = [0];
-    imm32.func('BOOL __stdcall ImmGetConversionStatus(void*, uint32_t*, uint32_t*)')(0x10001n, conv, sent);
-    assert.strictEqual(conv[0] & 0x0001, 0, '初始应为英文');
+    assert.strictEqual(Number(getLayout(5678)) & 0xffff, 1033, '初始应为英文 1033');
 
-    // 2. 切换到中文
-    imm32.func('BOOL __stdcall ImmSetConversionStatus(void*, uint32_t, uint32_t)')(0x10001n, 0x0001, 0);
+    postSwitch(0x10001n, 0x0050, 0n, 2052n);
+    assert.strictEqual(Number(getLayout(5678)) & 0xffff, 2052, '应已切换到中文');
 
-    // 3. 验证已切换
-    conv = [0];
-    imm32.func('BOOL __stdcall ImmGetConversionStatus(void*, uint32_t*, uint32_t*)')(0x10001n, conv, sent);
-    assert.strictEqual(conv[0] & 0x0001, 1, '应已切换到中文');
-
-    // 4. 切回英文
-    imm32.func('BOOL __stdcall ImmSetConversionStatus(void*, uint32_t, uint32_t)')(0x10001n, 0x0000, 0);
-
-    // 5. 验证已切回
-    conv = [0];
-    imm32.func('BOOL __stdcall ImmGetConversionStatus(void*, uint32_t*, uint32_t*)')(0x10001n, conv, sent);
-    assert.strictEqual(conv[0] & 0x0001, 0, '应已切回英文');
+    postSwitch(0x10001n, 0x0050, 0n, 1033n);
+    assert.strictEqual(Number(getLayout(5678)) & 0xffff, 1033, '应已切回英文');
 });
 
-test('模拟: IMM32 失败时降级到 layout 切换', () => {
+test('模拟: 未安装英语布局时 enLangId 为 0', () => {
     resetMock();
-    mockState.immContextValid = false; // IMM32 不可用
+    mockState.installedLayouts = [2052]; // 只有中文布局 → 单键盘场景
 
-    const imm32 = mockKoffi.load('imm32.dll');
     const user32 = mockKoffi.load('user32.dll');
+    const listFn = user32.func('int __stdcall GetKeyboardLayoutList(int, void*)');
+    const count = listFn(0, null);
+    const buf = Buffer.alloc(count * 8);
+    listFn(count, buf);
 
-    // 1. IMM32 查询失败
-    const ctx = imm32.func('void* __stdcall ImmGetContext(HWND)')(0x10001n);
-    assert.strictEqual(ctx, 0n, 'IMM 上下文应无效');
-
-    // 2. 降级到 layout 切换
-    user32.func('LRESULT __stdcall SendMessageW(HWND, UINT, WPARAM, LPARAM)')(0x10001n, 0x0050, 0n, 2052n);
-    assert.strictEqual(mockState.currentLangId, 2052, '应通过 layout 切换到中文');
+    const ids = [];
+    for (let i = 0; i < count; i++) ids.push(Number(buf.readBigUInt64LE(i * 8) & 0xffffn));
+    assert.ok(!ids.includes(1033), '英语布局缺失时不能找到 1033');
+    assert.ok(ids.includes(2052), '中文布局仍可用');
 });
 
 test('模拟: 多语言布局枚举', () => {
@@ -432,44 +380,50 @@ test('模拟: 多语言布局枚举', () => {
 });
 
 // ---- 测试 7: 关键 bug 修复验证 ----
-console.log('\n📦 测试 7: 关键 bug 修复验证 (_Out_ + null 返回)');
+console.log('\n📦 测试 7: 关键 bug 修复验证 (_Out_ 注解 + 布局切换机制)');
 
 test('bundle 包含 _Out_ 注解 (GetWindowThreadProcessId)', () => {
     assert.ok(bundleSrc.includes('_Out_ DWORD*'), '应包含 _Out_ DWORD*');
 });
 
-test('bundle 包含 _Out_ 注解 (ImmGetConversionStatus)', () => {
-    assert.ok(bundleSrc.includes('_Out_ uint32_t*'), '应包含 _Out_ uint32_t*');
+test('bundle 不再包含已移除的 IMM32 转换状态绑定', () => {
+    assert.ok(!bundleSrc.includes('ImmGetConversionStatus'), '不应再包含 ImmGetConversionStatus');
+    assert.ok(!bundleSrc.includes('ImmSetConversionStatus'), '不应再包含 ImmSetConversionStatus');
+    assert.ok(!bundleSrc.includes('imm32.dll'), '不应再加载 imm32.dll');
 });
 
-test('queryIMEMode 返回 null 而非 "en" (IMM32 失败时)', () => {
-    assert.ok(bundleSrc.includes('return null'), '应包含 return null');
+test('switchKeyboardLayout 通过 PostMessageW(WM_INPUTLANGCHANGEREQUEST) 切换', () => {
+    const section = bundleSrc.substring(
+        bundleSrc.indexOf('function switchKeyboardLayout('),
+        bundleSrc.indexOf('function sendImeToggle(')
+    );
+    assert.ok(section.includes('PostMessageW'), '应使用 PostMessageW');
+    assert.ok(section.includes('WM_INPUTLANGCHANGEREQUEST'), '应使用 WM_INPUTLANGCHANGEREQUEST');
+});
+
+test('enumerateKeyboardLayouts 区分中 / 英布局', () => {
+    const section = bundleSrc.substring(
+        bundleSrc.indexOf('function enumerateKeyboardLayouts('),
+        bundleSrc.indexOf('function switchKeyboardLayout(')
+    );
+    assert.ok(section.includes('isEnglishLangId'), '应调用 isEnglishLangId');
+    assert.ok(section.includes('isChineseLangId'), '应调用 isChineseLangId');
 });
 
 test('DualKeyboardStrategy 使用 Language ID 查询', () => {
-    // New architecture: DualKeyboardStrategy.queryMode uses getCurrentLanguageId
+    // DualKeyboardStrategy.queryMode uses getCurrentLanguageId
     assert.ok(bundleSrc.includes('getCurrentLanguageId'), '应使用 getCurrentLanguageId 查询');
 });
 
-test('queryIMEMode 包含 Language ID 降级逻辑', () => {
-    // queryIMEMode 函数体内应包含 getCurrentLanguageId 和 isChineseLangId
-    const queryIMEModeSection = bundleSrc.substring(
-        bundleSrc.indexOf('function queryIMEMode('),
-        bundleSrc.indexOf('function sendImeToggle(')
-    );
-    assert.ok(queryIMEModeSection.includes('getCurrentLanguageId'), 'queryIMEMode 应包含 getCurrentLanguageId 调用');
-    assert.ok(queryIMEModeSection.includes('isChineseLangId'), 'queryIMEMode 应包含 isChineseLangId 调用');
-    assert.ok(queryIMEModeSection.includes('isEnglishLangId'), 'queryIMEMode 应包含 isEnglishLangId 调用');
-});
-
 test('switchToEnglish/switchToChinese uses getCurrentLanguageId (same mechanism as detection)', () => {
-    // 双键盘方案：检测和切换应使用同一机制（Language ID）
-    // switchToEnglish/Chinese 应使用 getCurrentLanguageId 检查当前布局
-    const switchStart = bundleSrc.indexOf('switchToEnglish() {');
-    const switchSection = bundleSrc.substring(switchStart, switchStart + 2000);
-    assert.ok(!switchSection.includes('sendImeToggle'), '双键盘切换路径不应调用 sendImeToggle');
-    assert.ok(!switchSection.includes('setIMEMode'), '双键盘方案不应调用 setIMEMode');
-    assert.ok(switchSection.includes('getCurrentLanguageId'), '切换路径应使用 getCurrentLanguageId 检查当前布局');
+    // 双键盘方案：检测和切换应使用同一机制（Language ID），且不得回到热键/IMM32 路径
+    // esbuild 将类声明输出为 `XxxStrategy = class {`，以两个类声明之间为策略类作用域
+    const dualStart = bundleSrc.indexOf('DualKeyboardStrategy = class');
+    const dualEnd = bundleSrc.indexOf('SingleKeyboardStrategy = class');
+    assert.ok(dualStart >= 0 && dualEnd > dualStart, 'bundle 应包含两个策略类且顺序可预期');
+    const dualSection = bundleSrc.substring(dualStart, dualEnd);
+    assert.ok(!dualSection.includes('sendImeToggle'), '双键盘切换路径不应调用 sendImeToggle');
+    assert.ok(dualSection.includes('getCurrentLanguageId'), '双键盘检测应使用 getCurrentLanguageId');
 });
 
 test('bundle 包含英语键盘缺失的用户引导', () => {
@@ -517,17 +471,14 @@ test('bundle 包含模式监听器', () => {
     assert.ok(bundleSrc.includes('VimModeListener') || bundleSrc.includes('vim'), '应包含 Vim 模式监听器');
 });
 
-// ---- 汇总 ----
-console.log('\n═══════════════════════════════════════');
-console.log(`  结果: ${passCount}/${testCount} 通过, ${failCount} 失败`);
-console.log('═══════════════════════════════════════');
+// ---- 汇总（等异步用例跑完再统计）----
+Promise.all(pendingTests).then(() => {
+    console.log('\n═══════════════════════════════════════');
+    console.log(`  结果: ${passCount}/${testCount} 通过, ${failCount} 失败`);
+    console.log('═══════════════════════════════════════');
 
-// 清理
-ext.deactivate();
-process.exit(failCount > 0 ? 1 : 0);
-
-// ============================================================
-// 测试 7: 关键 bug 修复验证
-// ============================================================
-console.log('\n📦 测试 7: 关键 bug 修复验证 (_Out_ 注解 + null 返回)');
+    // 清理：deactivate 必须停掉适配器轮询，避免定时器泄漏
+    ext.deactivate();
+    process.exit(failCount > 0 ? 1 : 0);
+});
 

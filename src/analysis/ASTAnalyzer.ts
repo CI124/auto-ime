@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import Parser from 'web-tree-sitter';
 import * as path from 'path';
-import { LogSink } from './logger';
+import { LogSink } from '../infra/logger';
+import { IAnalyzer } from '../core/types';
 
 /**
  * 【开发者必读】：WASM 文件存放与构建说明
@@ -13,7 +14,99 @@ import { LogSink } from './logger';
  * 4. 如果遇到找不到 wasm 的情况，语法树解析会平滑降级，返回 false，此时不会触发任何输入法切换。
  */
 
-export class ASTAnalyzer {
+/**
+ * Per-language configuration, single source of truth.
+ * Adding a language = adding ONE entry here.
+ *
+ * `lineComments` / `blockComments` only feed the *fast text path*; when a marker is
+ * unknown or absent we simply fall back to the AST path, which is the source of truth.
+ */
+interface LanguageProfile {
+    /** Tree-sitter grammar wasm file name */
+    wasmFile: string;
+    /** Query source capturing comment / string nodes (capture names: comment | string) */
+    query: string;
+    /** Line-comment openers; empty when the language has none (e.g. CSS) */
+    lineComments: string[];
+    /** Block-comment [open, close]; null when the language has none */
+    blockComments: [string, string] | null;
+}
+
+const C_STYLE_BLOCK: [string, string] = ['/*', '*/'];
+
+// 多个语言共享同一“行注释 // + /* 块注释 */ + 注释/字符串捕获”形态，用工厂去重，
+// 新增同构语言 = 调用一次工厂（保留 wasm 文件名字面量，供构建产物名义断言）。
+const JS_TS_QUERY = `(comment) @comment\n(string) @string\n(template_string) @string`;
+const STRING_LITERAL_QUERY = `(comment) @comment\n(string_literal) @string`;
+
+function slashSlashLineProfile(wasmFile: string, query: string): LanguageProfile {
+    return { wasmFile, query, lineComments: ['//'], blockComments: C_STYLE_BLOCK };
+}
+
+const LANGUAGE_PROFILES: Record<string, LanguageProfile> = {
+    typescript: slashSlashLineProfile('tree-sitter-typescript.wasm', JS_TS_QUERY),
+    typescriptreact: slashSlashLineProfile('tree-sitter-typescript.wasm', JS_TS_QUERY),
+    javascript: slashSlashLineProfile('tree-sitter-javascript.wasm', JS_TS_QUERY),
+    javascriptreact: slashSlashLineProfile('tree-sitter-javascript.wasm', JS_TS_QUERY),
+    python: {
+        wasmFile: 'tree-sitter-python.wasm',
+        query: `(comment) @comment\n(string) @string`,
+        lineComments: ['#'],
+        blockComments: null, // 三引号字符串不是注释，交给 AST 路径
+    },
+    go: {
+        wasmFile: 'tree-sitter-go.wasm',
+        query: `(comment) @comment\n(interpreted_string_literal) @string\n(raw_string_literal) @string`,
+        lineComments: ['//'],
+        blockComments: C_STYLE_BLOCK,
+    },
+    rust: {
+        wasmFile: 'tree-sitter-rust.wasm',
+        query: `(line_comment) @comment\n(block_comment) @comment\n(string_literal) @string\n(raw_string_literal) @string`,
+        lineComments: ['//'],
+        blockComments: C_STYLE_BLOCK, // Rust 允许嵌套块注释，快路径仅作近似
+    },
+    c: {
+        wasmFile: 'tree-sitter-c.wasm',
+        query: `(comment) @comment\n(string_literal) @string`,
+        lineComments: ['//'],
+        blockComments: C_STYLE_BLOCK,
+    },
+    cpp: {
+        wasmFile: 'tree-sitter-cpp.wasm',
+        query: `(comment) @comment\n(string_literal) @string\n(raw_string_literal) @string`,
+        lineComments: ['//'],
+        blockComments: C_STYLE_BLOCK,
+    },
+    html: {
+        wasmFile: 'tree-sitter-html.wasm',
+        query: `(comment) @comment`,
+        lineComments: ['<!--'],
+        blockComments: null, // 单行 <!-- 已被 lineComments 覆盖，多行注释由 AST 路径处理
+    },
+    css: {
+        wasmFile: 'tree-sitter-css.wasm',
+        query: `(comment) @comment`,
+        lineComments: [], // CSS 没有 // 行注释：旧配置会把 url("http://…") 误判为注释
+        blockComments: C_STYLE_BLOCK,
+    },
+    lua: {
+        wasmFile: 'tree-sitter-lua.wasm',
+        query: `(comment) @comment\n(string) @string`,
+        lineComments: ['--'],
+        blockComments: null, // Lua 块注释是 --[[ ]]，由 AST 路径处理
+    },
+    java: slashSlashLineProfile('tree-sitter-java.wasm', STRING_LITERAL_QUERY),
+    kotlin: slashSlashLineProfile('tree-sitter-kotlin.wasm', STRING_LITERAL_QUERY),
+    shellscript: {
+        wasmFile: 'tree-sitter-bash.wasm',
+        query: `(comment) @comment\n(string) @string\n(raw_string) @string\n(heredoc_body) @string`,
+        lineComments: ['#'],
+        blockComments: null,
+    },
+};
+
+export class ASTAnalyzer implements IAnalyzer {
     private parser: Parser | null = null;
     private initialized = false;
     private languageMap = new Map<string, Parser.Language | null>();
@@ -23,46 +116,12 @@ export class ASTAnalyzer {
 
     // 增量解析: 缓存上一次的 Tree，供 parser.parse(text, oldTree) 使用
     private lastTree: Parser.Tree | null = null;
+    // 按 (uri, version) 缓存整篇文本：块注释快路径与 AST 路径都需要整篇 getText()，
+    // 同一文件版本内游标多次移动时复用，避免每次事件重新物化整篇字符串
+    private cachedDocKey = '';
+    private cachedDocText = '';
     // 取消机制: 每次分析递增，过期的解析结果会被丢弃
     private analysisGeneration = 0;
-
-    // WASM 文件映射字典：languageId -> wasm 文件名
-    private readonly WASM_FILE_MAPPING: Record<string, string> = {
-        'typescript': 'tree-sitter-typescript.wasm',
-        'typescriptreact': 'tree-sitter-typescript.wasm',
-        'javascript': 'tree-sitter-javascript.wasm',
-        'javascriptreact': 'tree-sitter-javascript.wasm',
-        'python': 'tree-sitter-python.wasm',
-        'go': 'tree-sitter-go.wasm',
-        'rust': 'tree-sitter-rust.wasm',
-        'c': 'tree-sitter-c.wasm',
-        'cpp': 'tree-sitter-cpp.wasm',
-        'html': 'tree-sitter-html.wasm',
-        'css': 'tree-sitter-css.wasm',
-        'lua': 'tree-sitter-lua.wasm',
-        'java': 'tree-sitter-java.wasm',
-        'kotlin': 'tree-sitter-kotlin.wasm',
-        'shellscript': 'tree-sitter-bash.wasm'
-    };
-
-    // Tree-sitter Query 模式：捕获注释和字符串节点（使用不同 capture 名区分）
-    private readonly COMMENT_QUERY: Record<string, string> = {
-        'javascript': `(comment) @comment\n(string) @string\n(template_string) @string`,
-        'javascriptreact': `(comment) @comment\n(string) @string\n(template_string) @string`,
-        'typescript': `(comment) @comment\n(string) @string\n(template_string) @string`,
-        'typescriptreact': `(comment) @comment\n(string) @string\n(template_string) @string`,
-        'python': `(comment) @comment\n(string) @string`,
-        'go': `(comment) @comment\n(interpreted_string_literal) @string\n(raw_string_literal) @string`,
-        'rust': `(line_comment) @comment\n(block_comment) @comment\n(string_literal) @string\n(raw_string_literal) @string`,
-        'c': `(comment) @comment\n(string_literal) @string`,
-        'cpp': `(comment) @comment\n(string_literal) @string\n(raw_string_literal) @string`,
-        'html': `(comment) @comment`,
-        'css': `(comment) @comment`,
-        'lua': `(comment) @comment\n(string) @string`,
-        'java': `(comment) @comment\n(string_literal) @string`,
-        'kotlin': `(comment) @comment\n(string_literal) @string`,
-        'shellscript': `(comment) @comment\n(string) @string\n(raw_string) @string\n(heredoc_body) @string`
-    };
 
     // 编译后的 Query 对象缓存
     private queryCache = new Map<string, Parser.Query | null>();
@@ -104,13 +163,10 @@ export class ASTAnalyzer {
     private async loadLanguage(languageId: string): Promise<Parser.Language | null> {
         if (!this.initialized || !this.parser) return null;
         if (this.languageMap.has(languageId)) {
-            const cached = this.languageMap.get(languageId) ?? null;
-            if (!cached) {
-            }
-            return cached;
+            return this.languageMap.get(languageId) ?? null;
         }
 
-        const wasmFile = this.WASM_FILE_MAPPING[languageId];
+        const wasmFile = LANGUAGE_PROFILES[languageId]?.wasmFile;
         if (!wasmFile) {
             if (!this.unmappedLanguagesLogged.has(languageId)) {
                 this.unmappedLanguagesLogged.add(languageId);
@@ -142,7 +198,7 @@ export class ASTAnalyzer {
             return this.queryCache.get(languageId) ?? null;
         }
 
-        const querySource = this.COMMENT_QUERY[languageId];
+        const querySource = LANGUAGE_PROFILES[languageId]?.query;
         if (!querySource) {
             this.queryCache.set(languageId, null);
             return null;
@@ -161,6 +217,20 @@ export class ASTAnalyzer {
     }
 
     /**
+     * 获取（并按需缓存）文档整篇文本。
+     * 真实 vscode.TextDocument 提供 uri/version；缺少这两个属性的调用方（如测试
+     * mock）会得到空 key，从而不缓存（保证不同 mock 文档间不互相污染）。
+     */
+    private getDocumentText(document: vscode.TextDocument): string {
+        const key = `${document.uri?.toString() ?? ''}@${document.version ?? -1}`;
+        if (key !== '' && key === this.cachedDocKey) return this.cachedDocText;
+        const text = document.getText();
+        this.cachedDocKey = key;
+        this.cachedDocText = text;
+        return text;
+    }
+
+    /**
      * 快速文本级注释检测（同步，无 AST 开销）
      * 返回: true = 确定在注释中, false = 确定不在, null = 不确定需 AST
      */
@@ -170,49 +240,31 @@ export class ASTAnalyzer {
         const textBeforeCursor = lineText.substring(0, col);
 
         // 行注释快速检测
-        const lineCommentPatterns: Record<string, string[]> = {
-            'typescript': ['//'],
-            'typescriptreact': ['//'],
-            'javascript': ['//'],
-            'javascriptreact': ['//'],
-            'python': ['#'],
-            'go': ['//'],
-            'rust': ['//'],
-            'c': ['//'],
-            'cpp': ['//'],
-            'html': ['<!--'],
-            'css': ['//'],
-            'lua': ['--'],
-            'java': ['//'],
-            'kotlin': ['//'],
-            'shellscript': ['#'],
-        };
-
-        const patterns = lineCommentPatterns[languageId];
-        if (patterns) {
-            for (const pattern of patterns) {
+        const profile = LANGUAGE_PROFILES[languageId];
+        if (profile) {
+            for (const pattern of profile.lineComments) {
                 const idx = textBeforeCursor.indexOf(pattern);
                 if (idx >= 0) {
                     // 检查注释标记前是否有未闭合的引号（简单启发式）
                     const before = textBeforeCursor.substring(0, idx);
-                    const dq = (before.match(/"/g) || []).length;
-                    const sq = (before.match(/'/g) || []).length;
-                    const bq = (before.match(/`/g) || []).length;
-                    if (dq % 2 === 0 && sq % 2 === 0 && bq % 2 === 0) {
+                    if (!hasUnclosedQuote(before)) {
                         return true;
                     }
                 }
             }
-        }
 
-        // 块注释快速检测：光标是否在 /* 和 */ 之间
-        const fullText = document.getText();
-        const offset = document.offsetAt(position);
-        const beforeText = fullText.substring(0, offset);
-        const lastBlockOpen = beforeText.lastIndexOf('/*');
-        const lastBlockClose = beforeText.lastIndexOf('*/');
-        if (lastBlockOpen >= 0 && lastBlockOpen > lastBlockClose) {
-            return true;
+            // 块注释快速检测：光标是否在 open 和 close 之间（语言无块注释则跳过）
+            if (profile.blockComments) {
+                const [open, close] = profile.blockComments;
+                const fullText = this.getDocumentText(document);
+                const offset = document.offsetAt(position);
+                // 用带 fromIndex 的 lastIndexOf 直接在游标前区间搜索，避免再复制一份子串
+                const lastBlockOpen = fullText.lastIndexOf(open, Math.max(0, offset - 1));
+                const lastBlockClose = fullText.lastIndexOf(close, Math.max(0, offset - 1));
+                if (lastBlockOpen >= 0 && lastBlockOpen > lastBlockClose) {
+                    return true;
+                }
+            }
         }
 
         // 光标前只有空白，不在注释中
@@ -241,7 +293,7 @@ export class ASTAnalyzer {
         const myGeneration = ++this.analysisGeneration;
 
         this.parser.setLanguage(lang);
-        const text = document.getText();
+        const text = this.getDocumentText(document);
 
         let tree: Parser.Tree;
         try {
@@ -274,31 +326,15 @@ export class ASTAnalyzer {
         for (const match of matches) {
             for (const capture of match.captures) {
                 const node = capture.node;
-                const startRow = node.startPosition.row;
-                const startCol = node.startPosition.column;
-                const endRow = node.endPosition.row;
-                const endCol = node.endPosition.column;
 
-                // 检查光标是否在节点范围内
-                let inRange = false;
-                if (row > startRow && row < endRow) {
-                    inRange = true;
-                } else if (row === startRow && row === endRow) {
-                    inRange = column >= startCol && column < endCol;
-                } else if (row === startRow) {
-                    inRange = column >= startCol;
-                } else if (row === endRow) {
-                    inRange = column < endCol;
-                }
-
-                if (!inRange) continue;
+                if (!containsPosition(node, row, column)) continue;
 
                 // 注释特殊处理：光标在注释起始位置之前时，视为不在注释中
-                if (capture.name === 'comment' && node.type.includes('comment')) {
-                    if (row === startRow && column <= startCol) {
-                        continue;
-                    }
-                }
+                const atOrBeforeCommentStart = capture.name === 'comment'
+                    && node.type.includes('comment')
+                    && row === node.startPosition.row
+                    && column <= node.startPosition.column;
+                if (atOrBeforeCommentStart) continue;
 
                 return { match: true, type: capture.name };
             }
@@ -320,4 +356,22 @@ export class ASTAnalyzer {
         this.parser = null;
         this.initialized = false;
     }
+}
+
+/** 行内引号是否未闭合（成对出现视为已闭合） */
+function hasUnclosedQuote(textBeforeMarker: string): boolean {
+    const count = (re: RegExp) => (textBeforeMarker.match(re) || []).length;
+    return count(/"/g) % 2 !== 0 || count(/'/g) % 2 !== 0 || count(/`/g) % 2 !== 0;
+}
+
+/** 节点的 [start, end) 区间（按行/列）是否包含给定位置 */
+function containsPosition(node: Parser.SyntaxNode, row: number, column: number): boolean {
+    const { row: startRow, column: startCol } = node.startPosition;
+    const { row: endRow, column: endCol } = node.endPosition;
+
+    if (row > startRow && row < endRow) return true;
+    if (row === startRow && row === endRow) return column >= startCol && column < endCol;
+    if (row === startRow) return column >= startCol;
+    if (row === endRow) return column < endCol;
+    return false;
 }

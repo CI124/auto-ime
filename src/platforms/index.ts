@@ -3,7 +3,7 @@
  */
 
 import { IPlatformAdapter } from '../core/types';
-import { LogSink } from '../logger';
+import { LogSink } from '../infra/logger';
 
 export function createPlatformAdapter(logger: LogSink): IPlatformAdapter {
     if (process.platform === 'win32') {

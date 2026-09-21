@@ -5,6 +5,112 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 修复
+
+- **`src/extension.ts`**：`ASTAnalyzer` 实例注册进 `context.subscriptions`，扩展停用时
+  释放 Tree / Query / Language / Parser 等 WASM 资源（此前 `dispose()` 从未被调用）；
+  Vim 延迟重试的 `setTimeout` 同样纳入订阅，停用时清除
+- **`tsconfig.json`**：补 `esModuleInterop`，`npx tsc --noEmit` 由 1 个错误变为 0 错误
+
+### 变更（CodeScene 健康度清理，运行行为不变）
+
+- **`src/ASTAnalyzer.ts`**：`WASM_FILE_MAPPING`、`COMMENT_QUERY`、函数体内每次调用重建的
+  `lineCommentPatterns` 三张按语言平行的表合并为单一 `LANGUAGE_PROFILES`（新增语言只需改
+  一处）；行/列区间判断与引号闭合判断抽为纯函数，降低核心检测函数的嵌套深度；删除空 `if`
+  死分支
+- **`src/platforms/linux/adapter.ts`**：`LinuxIMEManager` 接口收口（`queryModeAsync()`、
+  `syncFromSystem()` 变为必选，`queryModeAsync` 不再把 `this.envPath` 当形参传入），删除
+  `instanceof` 分派、`'syncFromSystem' in manager` 探测与 `as any` 强转；删除 4 个未被调用
+  的 getter；`5000 / 1000` 魔数改为 `DETECT_TIMEOUT_MS / QUERY_TIMEOUT_MS`
+- **`src/core/state-tracker.ts`**：删除只写不读的 `lastPositionChar`（`updatePosition(line)`
+  签名收窄）；`notifyAutoSwitch()` 去掉恒真的冗余 `if`；修正文件头关于 `switchTo()` 调用顺序
+  的过期注释
+- **`src/core/controller.ts`**：`toggleIME()` 改为复用 `switchTo()`，删除与自动切换路径重复
+  的中英文分支
+- **`src/win32/ime-ffi.ts`**：删除未使用的 FFI 绑定与常量（`SendMessageW`、`ImmGetOpenStatus`、
+  `ImmSetOpenStatus`、`IME_CMODE_ALPHANUMERIC`、与 `IME_CMODE_NATIVE` 同值的
+  `IME_CMODE_CHINESE`）；`queryIMEMode()` 的嵌套三元展开为顺序判断；`keybd_event` 的 `0 / 2`
+  改为具名 `KEYEVENTF_KEYDOWN / KEYEVENTF_KEYUP`
+- **`src/platforms/windows/adapter.ts`**：`init()` 的策略分支改为早返回的扁平结构（保持原有
+  各分支语义）；删除 `useDual()` / `DualKeyboardStrategy` 构造函数中形同虚设的 `ffi` 注入参数
+- **`src/extension.ts`**：`require('fs') / require('path')` 改为顶部 `import`；日志文件初始化
+  失败不再静默吞掉，改为在 logger 就绪后输出 `[Bootstrap]` 警告；`activate()` 拆出
+  `activateInternal()`；Vim / Normal 两条监听器注册路径合并为 `registerModeListener()`；
+  消除 `controller!` / `logger!` 非空断言与 `catch (e: any)`
+- **`src/core/types.ts`**：删除未被引用的 `AnalysisResult` / `CursorContext`；修正提及已移除的
+  Fcitx4、TSF 探测、`imm32` 切换方式的过期注释
+
+### 验证
+
+- `npx tsc --noEmit`：0 错误
+- `node esbuild.js` / `npm run compile`：构建通过
+- 四个 mock 测试全绿：`ast-analyzer-test` 59/59、`mock-linux-ime-test` 56/56、
+  `mock-koffi-test` 30/30、`mock-tsf-test` 17/17（合计 162）
+- 三张语言表合并前后用脚本逐键比对（15 个 languageId × wasmFile / query / lineComments），
+  数据完全等价
+
+> 注意：`test/ast-analyzer-test.js` 复现了一份 ASTAnalyzer 逻辑做独立测试，并不直接加载真实
+> 源码，因此 `ASTAnalyzer.ts` 的数据表合并主要依赖上述逐键比对与构建验证，仍建议在真实 VS Code
+> 中抽查注释/字符串判定。
+
+### 变更（第二轮：结构重构，含行为修正）
+
+#### 行为修正
+
+- **`src/ASTAnalyzer.ts`**：修正快速路径的注释误判
+  - CSS 无 `//` 行注释，旧配置会把 `url("http://…")` 一类文本误判为注释从而错误切到中文，
+    现在 `lineComments: []`
+  - 块注释标记不再对全语言硬编码 `/* */`：新增 `blockComments` 字段按语言声明，Python /
+    Shell / HTML / Lua 设为 `null`（它们没有 `/* */` 注释，旧逻辑会在含 `/*` 的字符串/路径上误判），
+    C 系语言仍为 `/* */`；`html` 的多行注释由 AST 路径兜底
+  - 收益：无块注释的语言不再读整档文本（少一次 `document.getText()`）
+
+#### 结构
+
+- **`src/platforms/linux/adapter.ts`**：`Fcitx5Manager` / `IBusManager` 的重复实现（约 80 行）
+  下沉到抽象基类 `CommandLineImeManager`，子类只提供“三条命令 + 日志文案”；所有日志文本与
+  shell 命令逐字保留
+- **`src/core/poller.ts`（新增）**：`ValuePoller` 统一“探针轮询 + 变化回调”，支持自适应间隔
+- **消除双轮询 + 修正 Windows 检测**：
+  - `IMEStateTracker` 不再自带 2s 兜底定时器（与适配器轮询重叠，同一状态被读两遍），
+    `startListening()` 不再接间隔参数
+  - Windows 双键盘的 Language ID 轮询从 tracker 下沉到 `WindowsAdapter`，`pollingInterval`
+    配置现由适配器自己读取；单键盘明确返回“不可观察”，不再白转一圈
+  - `IPlatformAdapter.startListening()` 的布尔返回值（`false` 表示“我自己轮询”→ 反直觉）
+    改为具名枚举 `ExternalSwitchSource`（`adapter-polling` / `event-driven` / `not-observable`），
+    并新增 `stopListening()` 由 `tracker.stopListening()` 统一回收
+- **`src/extension.ts`**：去全局化 —— 模块级可变状态从 **8 个降到 1 个**（`session`）。
+  一次激活的全部协作对象收进 `ActivationSession`（logger / adapter / tracker / controller /
+  订阅列表 / Vim 标记 / 键盘警告标记），`deactivate()` 只调 `session.dispose()`；
+  部分接线失败时会先 `dispose()` 再抛出，不会留下挂着的轮询定时器
+- **`src/win32/ime-ffi.ts`**：删除未接线的 IMM32 转换状态通道（`queryIMEMode`、`setIMEMode`、
+  `ImmGetContext` / `ImmReleaseContext` / `ImmGetConversionStatus` / `ImmSetConversionStatus`、
+  `imm32.dll` 加载、`IME_CMODE_NATIVE`、`LRESULT` 别名）——VS Code 是 TSF-only 宿主，
+  `ImmGetContext` 恒返回 0，该路径在本项自目标场景下读不到也写不动。如需支持非 VS Code 宿主，
+  可从 `v0.9.0` tag 找回
+- **`src/platforms/windows/single-keyboard.ts`**：删除无调用方的 `isAvailable()`；两个策略新增
+  `observesExternalSwitches` 能力标记（双键盘 true，单键盘 false）
+- **`src/platforms/windows/adapter.ts`**：三个配置读取器合并为 `readEnumConfig()` +
+  `readPollingIntervalConfig()`
+- **`src/core/types.ts`**：`startListening` 契约重写（见上）
+
+#### 测试
+
+- **修复 `test/mock-koffi-test.js` 用例跑器**：原来 `test()` 不 await 异步用例，“activate 可成功
+  执行”这个唯一的端到端用例实际从未被判定（其内部异常被吞）。现改为收集 Promise、
+  等全部完成后再汇总退出
+- **`mock-koffi-test` 的 activate 用例升级为真实断言**：提供完整 `mockContext`（含
+  `globalStorageUri`），断言无 FATAL、双键盘策略已选、`AST Analyzer initialized`、
+  模式监听器已注册、外部切换检测已启动、`context.subscriptions` 数量
+- **删除 7 个仅自测 mock 、且引用已删除 API 的用例**（IMM32 转换状态桩相关），改写
+  `PostMessageW` / 布局枚举 / 切换流程 3 个同类型用例；`imm32` 桩与 `SendMessageW` 桩从 mock 中移除
+- **新增 `mock-tsf-test` 用例**：双键盘 `startListening` 轮询 Language ID 并在外部切换时回调（16 → 17）
+- **修正 mock 保真度**：`GetWindowThreadProcessId` 桩签名补齐 `_Out_`（之前与真实绑定不一致，
+  静默落到 UNKNOWN 桩）；补上真实使用的 `PostMessageW` 桩
+- 用例数 164 → 162；减少的是不接触产品代码的 mock 自测，产品代码覆盖只增不减
+
 ## [0.9.0] - 2026-09-08
 
 ### 概述

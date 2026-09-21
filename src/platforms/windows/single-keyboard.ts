@@ -28,10 +28,13 @@
  *     makes with the mouse/keyboard can drift from our tracked state.
  */
 import { SwitchResult } from '../../core/types';
-import { LogSink } from '../../logger';
+import { LogSink } from '../../infra/logger';
 import { sendImeToggle, ToggleKey } from '../../win32/ime-ffi';
 
 export class SingleKeyboardStrategy {
+    /** TSF-only 宿主（VS Code / Electron）没有跨进程读取手段，外部切换不可观察 */
+    readonly observesExternalSwitches = false;
+
     private logger: LogSink;
     private toggleKey: ToggleKey;
     private targetMode: 'zh' | 'en' | null = null;
@@ -39,14 +42,6 @@ export class SingleKeyboardStrategy {
     constructor(logger: LogSink, toggleKey: ToggleKey = 'shift') {
         this.logger = logger;
         this.toggleKey = toggleKey;
-    }
-
-    /**
-     * The toggle is available synchronously (a Chinese layout exists), so the
-     * strategy is immediately usable. There is no async pipe to warm up.
-     */
-    isAvailable(): boolean {
-        return true;
     }
 
     queryMode(): 'zh' | 'en' {

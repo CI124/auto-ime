@@ -2,10 +2,14 @@
  * IME State Tracker
  * Tracks current IME mode, detects manual vs auto switches, manages override state
  *
- * State tracking strategy:
- * - Linux: Adaptive polling via LinuxAdapter (100ms active, 500ms idle)
- * - Windows: Polling via WindowsAdapter (configurable interval)
- * - Both platforms use polling for reliable external switch detection
+ * Who detects what:
+ * - The platform adapter owns the detection of external (manual) switches,
+ *   because "how to read the current IME" is a platform detail:
+ *   - Linux: adaptive polling (100ms active / 500ms idle) inside LinuxAdapter
+ *   - Windows dual keyboard: Language-ID polling inside WindowsAdapter
+ *   - Windows single keyboard: not observable (TSF-only host), so no polling at all
+ * - This class only consumes the callbacks; it deliberately does NOT run its own
+ *   timer, otherwise the same state gets polled twice per interval
  *
  * Why polling instead of D-Bus signals?
  * - Fcitx5 does NOT emit InputContext signals for remote switching (fcitx5-remote)
@@ -13,13 +17,15 @@
  * - Async polling is reliable and non-blocking
  *
  * No suppress window needed:
- * - controller.switchTo() updates adapter internal state BEFORE notifyAutoSwitch()
- * - poll/adapter.queryMode() and currentIME are always in sync
- * - only external switches (system tray) cause detectable changes
+ * - controller.switchTo() calls notifyAutoSwitch() synchronously, so currentIME
+ *   always equals the mode the controller believes the system is in
+ * - adapter.queryMode() reads the adapter's own tracked target state, so it stays
+ *   consistent with currentIME without any extra suppression
+ * - only external switches (system tray / hotkey) cause a detectable difference
  */
 
-import { IPlatformAdapter } from './types';
-import { LogSink } from '../logger';
+import { ExternalSwitchSource, IPlatformAdapter } from './types';
+import { LogSink } from '../infra/logger';
 
 export class IMEStateTracker {
     private logger: LogSink;
@@ -27,8 +33,6 @@ export class IMEStateTracker {
     private manualOverride = false;
     private currentIME = '';
     private lastPositionLine = -1;
-    private lastPositionChar = -1;
-    private pollingTimer: NodeJS.Timeout | null = null;
     private onChangeCallback: ((newIME: string) => void) | null = null;
 
     constructor(adapter: IPlatformAdapter, logger: LogSink) {
@@ -38,53 +42,39 @@ export class IMEStateTracker {
 
     /**
      * Start listening for IME state changes
-     * 
-     * Strategy:
-     * 1. Call adapter.startListening() which handles platform-specific polling
-     * 2. Start a low-frequency fallback polling as safety net
-     * 
-     * The adapter's startListening() returns:
-     * - false: adapter handles its own polling (Linux adaptive, Windows interval)
-     * - true: event-driven mode (currently unused, reserved for future)
+     *
+     * Delegates to the adapter, which owns the detection mechanism. The returned
+     * source is used for logging only — no second poll is started here.
      */
-    async startListening(intervalMs?: number): Promise<void> {
+    async startListening(): Promise<ExternalSwitchSource> {
         this.currentIME = this.adapter.queryMode();
         this.logger.info(`[StateTracker] Initial IME: ${this.currentIME}`);
 
-        // Start adapter's platform-specific listening
-        if (this.adapter.startListening) {
-            try {
-                const eventDriven = await this.adapter.startListening((newIME: 'zh' | 'en') => {
-                    this.handleExternalSwitch(newIME);
-                });
-                
-                if (eventDriven) {
-                    this.logger.info('[StateTracker] Event-driven listening active');
-                } else {
-                    this.logger.info('[StateTracker] Adapter handles its own polling');
-                }
-            } catch (e) {
-                const msg = e instanceof Error ? e.message : String(e);
-                this.logger.warn(`[StateTracker] Adapter startListening failed: ${msg}`);
-            }
-        }
+        if (!this.adapter.startListening) return 'not-observable';
 
-        // Always start low-frequency fallback polling as safety net
-        // This catches edge cases where adapter polling might miss a change
-        const fallbackInterval = intervalMs || 2000;
-        this.startFallbackPolling(fallbackInterval);
-        this.logger.info(`[StateTracker] Fallback polling started (${fallbackInterval}ms)`);
+        try {
+            const source = await this.adapter.startListening((newIME: 'zh' | 'en') => {
+                this.handleExternalSwitch(newIME);
+            });
+            this.logger.info(
+                source === 'adapter-polling'
+                    ? '[StateTracker] Adapter polls external switches; no extra polling here'
+                    : `[StateTracker] External switches not observable on this platform (${source})`
+            );
+            return source;
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            this.logger.warn(`[StateTracker] Adapter startListening failed: ${msg}`);
+            return 'not-observable';
+        }
     }
 
     /**
-     * Stop listening
+     * Stop listening (the adapter owns the only timer)
      */
     stopListening(): void {
         this.logger.info('[StateTracker] Stopping');
-        if (this.pollingTimer) {
-            clearInterval(this.pollingTimer);
-            this.pollingTimer = null;
-        }
+        this.adapter.stopListening?.();
     }
 
     /**
@@ -99,9 +89,7 @@ export class IMEStateTracker {
      * Updates currentIME immediately to prevent poll/event re-detection
      */
     notifyAutoSwitch(mode: 'zh' | 'en'): void {
-        if (this.currentIME !== mode) {
-            this.currentIME = mode;
-        }
+        this.currentIME = mode;
     }
 
     /**
@@ -133,11 +121,10 @@ export class IMEStateTracker {
     }
 
     /**
-     * Record current cursor position
+     * Record current cursor line (used by isDifferentPosition)
      */
-    updatePosition(line: number, character: number): void {
+    updatePosition(line: number): void {
         this.lastPositionLine = line;
-        this.lastPositionChar = character;
     }
 
     /**
@@ -177,23 +164,4 @@ export class IMEStateTracker {
             this.onChangeCallback(newIME);
         }
     }
-
-    /**
-     * Low-frequency fallback polling (safety net)
-     * 
-     * This runs at a lower frequency than the adapter's own polling
-     * to catch any edge cases where the adapter might miss a change.
-     * 
-     * Linux: adapter uses 100ms/500ms adaptive, this uses 2000ms
-     * Windows: adapter uses configurable interval (default 150ms), this uses 2000ms
-     */
-    private startFallbackPolling(intervalMs: number): void {
-        this.pollingTimer = setInterval(() => {
-            const newIME = this.adapter.queryMode();
-            if (newIME && newIME !== this.currentIME) {
-                this.handleExternalSwitch(newIME);
-            }
-        }, intervalMs);
-    }
-
 }

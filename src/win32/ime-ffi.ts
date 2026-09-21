@@ -1,10 +1,14 @@
 /**
  * Windows IME FFI 绑定 (koffi)
  * 替代 PowerShell 方案，性能从 ~100ms 提升到 <1ms
+ *
+ * 只绑定真正用到的 API：键盘布局枚举 / 查询 / 切换（user32）与热键注入。
+ * IMM32 的 ImmGetContext / ImmSetConversionStatus 一类转换状态读写已全部移除：
+ * VS Code 是 TSF-only 宿主，ImmGetContext 恒返回 0，对中文/英文模式既读不到也写不动。
  */
 
 import koffi from 'koffi';
-import { LogSink } from '../logger';
+import { LogSink } from '../infra/logger';
 
 // ============ Win32 类型定义 ============
 
@@ -15,90 +19,53 @@ const DWORD = koffi.alias('DWORD', 'uint32_t');
 const UINT = koffi.alias('UINT', 'unsigned int');
 const WPARAM = koffi.alias('WPARAM', 'uint64');
 const LPARAM = koffi.alias('LPARAM', 'int64');
-const LRESULT = koffi.alias('LRESULT', 'int64');
 const BOOL = koffi.alias('BOOL', 'int32_t');
 
 // ============ 加载 DLL ============
 
 const user32 = koffi.load('user32.dll');
-const imm32 = koffi.load('imm32.dll');
 const kernel32 = koffi.load('kernel32.dll');
 
 // ============ user32.dll 函数绑定 ============
 
-export const GetForegroundWindow = user32.func(
+const GetForegroundWindow = user32.func(
     'HWND __stdcall GetForegroundWindow()'
 );
 
-export const GetWindowThreadProcessId = user32.func(
+const GetWindowThreadProcessId = user32.func(
     'DWORD __stdcall GetWindowThreadProcessId(HWND, _Out_ DWORD*)'
 );
 
-export const GetKeyboardLayout = user32.func(
+const GetKeyboardLayout = user32.func(
     'HKL __stdcall GetKeyboardLayout(DWORD)'
 );
 
-export const GetKeyboardLayoutList = user32.func(
+const GetKeyboardLayoutList = user32.func(
     'int __stdcall GetKeyboardLayoutList(int, void*)'
 );
 
-export const SendMessageW = user32.func(
-    'LRESULT __stdcall SendMessageW(HWND, UINT, WPARAM, LPARAM)'
-);
-
-export const PostMessageW = user32.func(
+const PostMessageW = user32.func(
     'BOOL __stdcall PostMessageW(HWND, UINT, WPARAM, LPARAM)'
 );
 
-export const AttachThreadInput = user32.func(
+const AttachThreadInput = user32.func(
     'BOOL __stdcall AttachThreadInput(DWORD, DWORD, BOOL)'
 );
 
-export const GetCurrentThreadId = kernel32.func(
+const GetCurrentThreadId = kernel32.func(
     'DWORD __stdcall GetCurrentThreadId()'
-);
-
-// ============ imm32.dll 函数绑定 ============
-
-export const ImmGetContext = imm32.func(
-    'void* __stdcall ImmGetContext(HWND)'
-);
-
-export const ImmReleaseContext = imm32.func(
-    'BOOL __stdcall ImmReleaseContext(HWND, void*)'
-);
-
-export const ImmGetConversionStatus = imm32.func(
-    'BOOL __stdcall ImmGetConversionStatus(void*, _Out_ uint32_t*, _Out_ uint32_t*)'
-);
-
-export const ImmSetConversionStatus = imm32.func(
-    'BOOL __stdcall ImmSetConversionStatus(void*, uint32_t, uint32_t)'
-);
-
-export const ImmGetOpenStatus = imm32.func(
-    'BOOL __stdcall ImmGetOpenStatus(void*)'
-);
-
-export const ImmSetOpenStatus = imm32.func(
-    'BOOL __stdcall ImmSetOpenStatus(void*, BOOL)'
 );
 
 // ============ Win32 常量 ============
 
-export const WM_INPUTLANGCHANGEREQUEST = 0x0050;
-
-// ImmGetConversionStatus / ImmSetConversionStatus 常量
-export const IME_CMODE_ALPHANUMERIC = 0x0000;  // 英文模式
-export const IME_CMODE_NATIVE = 0x0001;         // 中文/日文等本地模式
-export const IME_CMODE_CHINESE = 0x0001;        // 中文模式（同 NATIVE）
+const WM_INPUTLANGCHANGEREQUEST = 0x0050;
 
 // ============ 辅助函数 ============
 
 /**
  * 获取真正的前台窗口句柄（处理线程输入附加）
  */
-export function getTrueForegroundWindow(): bigint {
+function getTrueForegroundWindow(): bigint {
     let hwnd = BigInt(GetForegroundWindow() as any);
     if (!hwnd) return 0n;
 
@@ -139,7 +106,7 @@ const CHINESE_LANG_IDS = [2052, 1028, 3076, 5124, 4100];  // 简体(大陆), 繁
 /**
  * 判断 Language ID 是否为英文
  */
-export function isEnglishLangId(langId: number): boolean {
+function isEnglishLangId(langId: number): boolean {
     return ENGLISH_LANG_IDS.includes(langId);
 }
 
@@ -187,44 +154,6 @@ export function switchKeyboardLayout(langId: number, logger?: LogSink): void {
     PostMessageW(hwnd, WM_INPUTLANGCHANGEREQUEST, BigInt(0), BigInt(langId));
 }
 
-// ============ IMM32 输入法模式查询/切换 ============
-
-/**
- * 查询当前输入法的中文/英文模式
- * 优先使用 IMM32 ImmGetConversionStatus，失败时回退到 Language ID 判断
- * 返回 'zh' | 'en'，仅当两种方法都失败时返回 null
- */
-export function queryIMEMode(logger?: LogSink): 'zh' | 'en' | null {
-    const hwnd = getTrueForegroundWindow();
-    if (!hwnd) return null;
-
-    // 第一优先：IMM32（适用于传统 IME，如微软拼音旧版）
-    const hImmCtx = ImmGetContext(hwnd);
-    if (hImmCtx) {
-        const convBuf = [0];
-        const sentBuf = [0];
-        const ok = ImmGetConversionStatus(hImmCtx, convBuf, sentBuf);
-        ImmReleaseContext(hwnd, hImmCtx);
-
-        if (ok) {
-            const result = (Number(convBuf[0]) & IME_CMODE_NATIVE) !== 0 ? 'zh' : 'en';
-            logger?.debug(`[FFI] queryIMEMode: imm32 → ${result}`);
-            return result;
-        }
-    }
-
-    // 第二优先：Language ID（适用于 TSF IME 如微软拼音，ImmGetContext 返回 null）
-    const langId = getCurrentLanguageId();
-    if (langId !== 0) {
-        const result = isChineseLangId(langId) ? 'zh' : isEnglishLangId(langId) ? 'en' : null;
-        if (result) {
-            return result;
-        }
-    }
-
-    return null;
-}
-
 // ============ 单键盘切换：模拟 IME 切换热键 ============
 
 // 为什么用「模拟切换热键」而不是直接写 TSF compartment？
@@ -241,6 +170,10 @@ const VK_SHIFT = 0x10;
 const VK_CONTROL = 0x11;
 const VK_SPACE = 0x20;
 
+// keybd_event 的 dwFlags：0 = 按下，KEYEVENTF_KEYUP = 抬起
+const KEYEVENTF_KEYDOWN = 0;
+const KEYEVENTF_KEYUP = 0x02;
+
 const keybdEvent = user32.func(
     'void __stdcall keybd_event(uint8_t, uint8_t, uint32_t, uint64)'
 );
@@ -250,54 +183,16 @@ const keybdEvent = user32.func(
  * 同步注入、立即返回；实际翻转由 IME 在后台处理。
  */
 export function sendImeToggle(key: ToggleKey, logger?: LogSink): void {
-    const down = 0;
-    const up = 2;
+    // ctrl-space 需保持 Ctrl 贯穿 Space 的按下/抬起顺序，因此不能拆成两次 tap()
     if (key === 'ctrl-space') {
-        keybdEvent(VK_CONTROL, 0, down, 0n);
-        keybdEvent(VK_SPACE, 0, down, 0n);
-        keybdEvent(VK_SPACE, 0, up, 0n);
-        keybdEvent(VK_CONTROL, 0, up, 0n);
+        keybdEvent(VK_CONTROL, 0, KEYEVENTF_KEYDOWN, 0n);
+        keybdEvent(VK_SPACE, 0, KEYEVENTF_KEYDOWN, 0n);
+        keybdEvent(VK_SPACE, 0, KEYEVENTF_KEYUP, 0n);
+        keybdEvent(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0n);
     } else {
         // 默认：Shift（微软拼音 Win11 默认的中英切换键）
-        keybdEvent(VK_SHIFT, 0, down, 0n);
-        keybdEvent(VK_SHIFT, 0, up, 0n);
+        keybdEvent(VK_SHIFT, 0, KEYEVENTF_KEYDOWN, 0n);
+        keybdEvent(VK_SHIFT, 0, KEYEVENTF_KEYUP, 0n);
     }
     logger?.debug(`[FFI] sendImeToggle(${key})`);
-}
-
-/**
- * 设置输入法模式（通过 IMM32 ImmSetConversionStatus）
- * mode: true=中文, false=英文
- * 返回是否成功
- */
-export function setIMEMode(chinese: boolean, logger?: LogSink): boolean {
-    const hwnd = getTrueForegroundWindow();
-    if (!hwnd) return false;
-
-    const hImmCtx = ImmGetContext(hwnd);
-    if (!hImmCtx) {
-        // Expected for TSF IMEs (Microsoft Pinyin) — caller handles fallback
-        return false;
-    }
-
-    const convBuf = [0];
-    const sentBuf = [0];
-    ImmGetConversionStatus(hImmCtx, convBuf, sentBuf);
-
-    const currentConv = Number(convBuf[0]);
-    if (chinese) {
-        convBuf[0] = currentConv | IME_CMODE_NATIVE;
-    } else {
-        convBuf[0] = currentConv & ~IME_CMODE_NATIVE;
-    }
-
-    const ok = ImmSetConversionStatus(hImmCtx, convBuf[0], sentBuf[0]);
-    ImmReleaseContext(hwnd, hImmCtx);
-
-    if (ok) {
-        logger?.debug(`[FFI] setIMEMode(${chinese}) → ok`);
-    } else {
-        logger?.debug('[FFI] setIMEMode: ImmSetConversionStatus failed');
-    }
-    return ok !== 0;
 }

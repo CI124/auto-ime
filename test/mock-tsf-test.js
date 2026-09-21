@@ -33,6 +33,7 @@ const mockState = {
     foregroundHwnd: 0x00010001n,
     strategy: 'auto',          // auto-ime.windows.strategy
     toggleKey: 'shift',        // auto-ime.windows.toggleKey
+    pollingInterval: 20,       // auto-ime.windows.pollingInterval（测试用短间隔）
     logLines: [],
     keybdCalls: [],            // 记录 keybd_event 调用
     failToggle: false,
@@ -44,6 +45,7 @@ function resetMock() {
     mockState.foregroundHwnd = 0x00010001n;
     mockState.strategy = 'auto';
     mockState.toggleKey = 'shift';
+    mockState.pollingInterval = 20;
     mockState.logLines = [];
     mockState.keybdCalls = [];
     mockState.failToggle = false;
@@ -138,6 +140,7 @@ Module._load = function (request, parent, isMain) {
                     get: (key, def) => {
                         if (section === 'auto-ime.windows' && key === 'strategy') return mockState.strategy;
                         if (section === 'auto-ime.windows' && key === 'toggleKey') return mockState.toggleKey;
+                        if (section === 'auto-ime.windows' && key === 'pollingInterval') return mockState.pollingInterval;
                         return def;
                     },
                 }),
@@ -403,15 +406,35 @@ test('strategy=dual-keyboard 缺英语布局时降级为热键切换并记录错
 // ---- 测试 5: 无读取能力说明 ----
 section('📦 测试 5: 无跨进程读取（诚实说明）');
 
-test('startListening 返回 false（无事件驱动读取）', async () => {
+test('startListening 返回 not-observable（单键盘无跨进程读取）', async () => {
     resetMock();
     mockState.installedLayouts = [2052];
     const adapter = new WindowsAdapter();
     adapter.init(createLogger());
 
-    const eventDriven = await adapter.startListening(() => {});
-    assert.strictEqual(eventDriven, false, '应告知无法事件驱动监听（无跨进程读取）');
+    const source = await adapter.startListening(() => {});
+    assert.strictEqual(source, 'not-observable', '应告知无法观察外部切换（无跨进程读取）');
     adapter.dispose();
+});
+
+test('双键盘：startListening 轮询 Language ID，外部切换时回调', async () => {
+    resetMock();
+    mockState.installedLayouts = [1033, 2052];
+    mockState.currentLangId = 1033;
+    const adapter = new WindowsAdapter();
+    adapter.init(createLogger());
+
+    const seen = [];
+    const source = await adapter.startListening((mode) => seen.push(mode));
+    assert.strictEqual(source, 'adapter-polling', '双键盘应可观察外部切换');
+
+    // 模拟用户在编辑器外切换布局（Alt+Shift / 托盘）
+    mockState.currentLangId = 2052;
+    await sleep(120);
+    adapter.dispose();
+
+    assert.ok(seen.includes('zh'), `应回调外部切换到 zh，实际 ${JSON.stringify(seen)}`);
+    assert.ok(!logged('not observable'), '双键盘不应记为不可观察');
 });
 
 test('syncState 不抛异常（无跨进程读取，状态保持跟踪）', () => {

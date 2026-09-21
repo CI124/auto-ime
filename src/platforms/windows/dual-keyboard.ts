@@ -8,16 +8,19 @@
  */
 
 import { SwitchResult } from '../../core/types';
-import { LogSink } from '../../logger';
+import { LogSink } from '../../infra/logger';
 import * as ffi from '../../win32/ime-ffi';
 
 export class DualKeyboardStrategy {
+    /** 前台线程的 Language ID 可跨进程读取，因此能轮询到外部（Alt+Shift）切换 */
+    readonly observesExternalSwitches = true;
+
     private enLangId: number;
     private zhLangId: number;
     private logger: LogSink;
     private currentLayout: number; // Internal target state
 
-    constructor(_ffi: typeof ffi, enLangId: number, zhLangId: number, logger: LogSink) {
+    constructor(enLangId: number, zhLangId: number, logger: LogSink) {
         this.enLangId = enLangId;
         this.zhLangId = zhLangId;
         this.logger = logger;
@@ -36,17 +39,7 @@ export class DualKeyboardStrategy {
             this.logger.error('[DualKB] EN: no English keyboard layout');
             return { success: false, method: 'none' };
         }
-
-        // Check internal target state (not async system state)
-        if (this.currentLayout === this.enLangId) {
-            return { success: true, method: 'skip' };
-        }
-
-        const t0 = Date.now();
-        this.currentLayout = this.enLangId;
-        ffi.switchKeyboardLayout(this.enLangId, this.logger);
-        this.logger.info(`[DualKB] EN: layout (${Date.now() - t0}ms)`);
-        return { success: true, method: 'layout', elapsedMs: Date.now() - t0 };
+        return this.apply(this.enLangId, 'EN');
     }
 
     switchToChinese(): SwitchResult {
@@ -54,16 +47,23 @@ export class DualKeyboardStrategy {
             this.logger.error('[DualKB] ZH: no Chinese keyboard layout');
             return { success: false, method: 'none' };
         }
+        return this.apply(this.zhLangId, 'ZH');
+    }
 
-        // Check internal target state
-        if (this.currentLayout === this.zhLangId) {
+    /**
+     * 切换到目标键盘布局。PostMessageW 是异步的，因此以内部目标状态判断是否 skip，
+     * 而不是读取可能滞后的系统状态。en/zh 两条路径仅目标 LangID 与日志标签不同。
+     */
+    private apply(langId: number, label: 'EN' | 'ZH'): SwitchResult {
+        // Check internal target state (not async system state)
+        if (this.currentLayout === langId) {
             return { success: true, method: 'skip' };
         }
 
         const t0 = Date.now();
-        this.currentLayout = this.zhLangId;
-        ffi.switchKeyboardLayout(this.zhLangId, this.logger);
-        this.logger.info(`[DualKB] ZH: layout (${Date.now() - t0}ms)`);
+        this.currentLayout = langId;
+        ffi.switchKeyboardLayout(langId, this.logger);
+        this.logger.info(`[DualKB] ${label}: layout (${Date.now() - t0}ms)`);
         return { success: true, method: 'layout', elapsedMs: Date.now() - t0 };
     }
 

@@ -21,8 +21,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { IPlatformAdapter, SwitchResult } from '../../core/types';
-import { LogSink } from '../../logger';
+import { IPlatformAdapter, SwitchResult, ExternalSwitchSource } from '../../core/types';
+import { ValuePoller } from '../../core/poller';
+import { LogSink } from '../../infra/logger';
 
 // ========== PATH Helper ==========
 
@@ -41,21 +42,18 @@ function buildEnvPath(): string {
 
 // ========== Bash Helper ==========
 
+/** 输入法框架探测（command -v）允许耗时较长 */
+const DETECT_TIMEOUT_MS = 5000;
+/** 状态查询 / 切换命令必须快速返回，不阻塞编辑器 */
+const QUERY_TIMEOUT_MS = 1000;
+
 function runBash(script: string, args: string[], envPath: string, timeout: number): string {
-    return execFileSync('bash', ['-c', script, 'bash_script.sh', ...args], {
-        encoding: 'utf-8',
-        timeout,
-        env: { ...process.env, PATH: envPath }
-    }).trim();
+    return execFileSync('bash', ['-c', script, 'bash_script.sh', ...args], execOptions(timeout, envPath)).trim();
 }
 
 function runBashAsync(script: string, envPath: string, timeout: number): Promise<string> {
     return new Promise((resolve, reject) => {
-        exec(`bash -c '${script}'`, {
-            encoding: 'utf-8',
-            timeout,
-            env: { ...process.env, PATH: envPath }
-        }, (error, stdout, stderr) => {
+        exec(`bash -c '${script}'`, execOptions(timeout, envPath), (error, stdout, stderr) => {
             if (error) {
                 reject(error);
             } else {
@@ -67,15 +65,20 @@ function runBashAsync(script: string, envPath: string, timeout: number): Promise
 
 function tryExecBash(script: string, envPath: string, timeout: number): boolean {
     try {
-        execFileSync('bash', ['-c', script, 'bash_script.sh'], {
-            encoding: 'utf-8',
-            timeout,
-            env: { ...process.env, PATH: envPath }
-        });
+        execFileSync('bash', ['-c', script, 'bash_script.sh'], execOptions(timeout, envPath));
         return true;
     } catch {
         return false;
     }
+}
+
+/** runBash / runBashAsync / tryExecBash 共用的 exec 选项（编码 / 超时 / PATH 环境） */
+function execOptions(timeout: number, envPath: string) {
+    return {
+        encoding: 'utf-8' as const,
+        timeout,
+        env: { ...process.env, PATH: envPath },
+    };
 }
 
 // ========== Fcitx5 Profile Reader ==========
@@ -153,12 +156,10 @@ export class LinuxAdapter implements IPlatformAdapter {
     private logger!: LogSink;
     private envPath!: string;
     private manager: LinuxIMEManager | null = null;
-    private changeCallback: ((mode: 'zh' | 'en') => void) | null = null;
-    
+
     // Adaptive polling state
-    private pollTimer: NodeJS.Timeout | null = null;
+    private poller: ValuePoller<'zh' | 'en'> | null = null;
     private lastActivityTime: number = Date.now();
-    private lastPolledMode: 'zh' | 'en' = 'en';
     private pollConfig: AdaptivePollConfig = DEFAULT_POLL_CONFIG;
 
     init(logger: LogSink): void {
@@ -207,41 +208,32 @@ export class LinuxAdapter implements IPlatformAdapter {
      * Called on window focus restore
      */
     syncState(): void {
-        if (this.manager && 'syncFromSystem' in this.manager) {
-            (this.manager as any).syncFromSystem();
-        }
+        this.manager?.syncFromSystem();
     }
 
     /**
      * Start adaptive polling for external manual switches
-     * 
+     *
      * Why polling instead of D-Bus signals?
      * - Fcitx5 does NOT emit InputContext signals for remote switching
      * - dbus-monitor showed only method calls (SetCurrentIM, Toggle), no signals
      * - Async polling with adaptive intervals is reliable and non-blocking
-     * 
-     * Returns false to indicate polling mode (not event-driven)
      */
-    async startListening(callback: (mode: 'zh' | 'en') => void): Promise<boolean> {
-        this.changeCallback = callback;
-        this.lastPolledMode = this.queryMode();
+    async startListening(onChange: (mode: 'zh' | 'en') => void): Promise<ExternalSwitchSource> {
         this.lastActivityTime = Date.now();
-        
         this.logger.info(`[Linux] Starting adaptive polling (active=${this.pollConfig.activeInterval}ms, idle=${this.pollConfig.idleInterval}ms)`);
-        this.startAdaptivePolling();
-        
-        return false; // Not using D-Bus signals
+        this.startAdaptivePolling(onChange);
+        return 'adapter-polling';
     }
 
     /**
      * Stop polling
      */
     stopListening(): void {
-        if (this.pollTimer) {
-            clearTimeout(this.pollTimer);
-            this.pollTimer = null;
-            this.logger.info('[Linux] Polling stopped');
-        }
+        if (!this.poller) return;
+        this.poller.stop();
+        this.poller = null;
+        this.logger.info('[Linux] Polling stopped');
     }
 
     dispose(): void {
@@ -250,35 +242,18 @@ export class LinuxAdapter implements IPlatformAdapter {
 
     // ========== Adaptive Polling Implementation ==========
 
-    private startAdaptivePolling(): void {
-        const poll = async () => {
-            try {
-                // Use async query to avoid blocking
-                const newMode = await this.queryModeAsync();
-                
-                if (newMode !== this.lastPolledMode) {
-                    const oldMode = this.lastPolledMode;
-                    this.lastPolledMode = newMode;
-                    this.lastActivityTime = Date.now(); // Keep high frequency on change
-                    
-                    this.logger.info(`[Linux] Polling detected change: ${oldMode} → ${newMode}`);
-                    
-                    if (this.changeCallback) {
-                        this.changeCallback(newMode);
-                    }
-                }
-            } catch (error) {
-                // Ignore polling errors, will retry next interval
-                this.logger.debug(`[Linux] Polling error: ${error}`);
-            }
-            
-            // Schedule next poll with adaptive interval
-            const nextInterval = this.getNextInterval();
-            this.pollTimer = setTimeout(poll, nextInterval);
-        };
-        
-        // Start first poll
-        poll();
+    private startAdaptivePolling(onChange: (mode: 'zh' | 'en') => void): void {
+        this.poller = new ValuePoller<'zh' | 'en'>(
+            () => this.queryModeAsync(),  // async read keeps the cursor hot path unblocked
+            (newMode, oldMode) => {
+                this.lastActivityTime = Date.now(); // keep high frequency on change
+                this.logger.info(`[Linux] Polling detected change: ${oldMode} → ${newMode}`);
+                onChange(newMode);
+            },
+            () => this.getNextInterval(),
+            (error) => this.logger.debug(`[Linux] Polling error: ${error}`),
+        );
+        this.poller.start();
     }
 
     private getNextInterval(): number {
@@ -293,14 +268,7 @@ export class LinuxAdapter implements IPlatformAdapter {
      */
     private async queryModeAsync(): Promise<'zh' | 'en'> {
         if (!this.manager) return 'en';
-        
-        if (this.manager instanceof Fcitx5Manager) {
-            return await this.manager.queryModeAsync(this.envPath);
-        } else if (this.manager instanceof IBusManager) {
-            return await this.manager.queryModeAsync(this.envPath);
-        }
-        
-        return this.manager.queryMode();
+        return this.manager.queryModeAsync();
     }
 
     // ========== Detection ==========
@@ -308,14 +276,14 @@ export class LinuxAdapter implements IPlatformAdapter {
     private isFcitx5Available(): boolean {
         return tryExecBash(
             'command -v fcitx5-remote >/dev/null 2>&1 && [ -f "$HOME/.config/fcitx5/profile" ]',
-            this.envPath, 5000
+            this.envPath, DETECT_TIMEOUT_MS
         );
     }
 
     private isIBusAvailable(): boolean {
         return tryExecBash(
             'command -v ibus >/dev/null 2>&1',
-            this.envPath, 5000
+            this.envPath, DETECT_TIMEOUT_MS
         );
     }
 }
@@ -324,35 +292,55 @@ export class LinuxAdapter implements IPlatformAdapter {
 
 interface LinuxIMEManager {
     queryMode(): 'zh' | 'en';
+    /** 非阻塞查询，供自适应轮询使用 */
+    queryModeAsync(): Promise<'zh' | 'en'>;
     switchToEnglish(): SwitchResult;
     switchToChinese(): SwitchResult;
-    syncFromSystem?(): void;
+    /** 从系统重新读取真实状态，修正内部缓存 */
+    syncFromSystem(): void;
     queryFromSystem(): string;
 }
 
-// ========== Fcitx5 Manager ==========
+type IMETargets = { english: string; chinese: string };
 
-const FCITX5_SWITCH_SCRIPT = `fcitx5-remote -s "$1"`;
+/**
+ * Fcitx5 与 IBus 只在「三条命令 + 日志前缀」上不同，其余行为完全一致：
+ * 跟踪目标输入法名、已处于目标则 skip、异步查询失败退回缓存、聚焦时同步。
+ * 因此这里只实现一次，子类只提供命令与文案。
+ */
+abstract class CommandLineImeManager implements LinuxIMEManager {
+    protected readonly logger: LogSink;
+    protected readonly envPath: string;
+    protected readonly englishTarget: string;
+    protected readonly chineseTarget: string;
+    /** 我们「认为」系统当前选中的输入法名（切换后立即更新，不每次实时读） */
+    protected currentTarget: string;
 
-class Fcitx5Manager implements LinuxIMEManager {
-    private logger: LogSink;
-    private envPath: string;
-    private englishTarget: string;
-    private chineseTarget: string;
-    private currentTarget: string;
-
-    constructor(logger: LogSink, envPath: string) {
+    protected constructor(logger: LogSink, envPath: string, targets: IMETargets) {
         this.logger = logger;
         this.envPath = envPath;
-        const targets = readFcitx5Profile(logger);
         this.englishTarget = targets.english;
         this.chineseTarget = targets.chinese;
         this.currentTarget = this.queryFromSystem();
-        logger.info(`[Fcitx5] Initial state: ${this.currentTarget === this.englishTarget ? 'en' : 'zh'}`);
     }
 
-    getEnglishTarget(): string { return this.englishTarget; }
-    getChineseTarget(): string { return this.chineseTarget; }
+    /** 子类在 super() 之后调用：抽象成员只能在构造完成后访问 */
+    protected logInitialState(): void {
+        this.logger.info(`[${this.logTag}] Initial state: ${this.queryMode()}`);
+    }
+
+    /** 日志前缀，如 Fcitx5 / IBus */
+    protected abstract get logTag(): string;
+    /** SwitchResult.method，如 fcitx5 / ibus */
+    protected abstract get switchMethod(): string;
+    /** 读取当前输入法的命令（同步与异步轮询共用） */
+    protected abstract get queryCommand(): string;
+    /** 切换输入法的 bash 脚本，$1 = 目标输入法名 */
+    protected abstract get switchScript(): string;
+    /** 查询失败时的日志文案 */
+    protected abstract get queryErrorLabel(): string;
+    /** 切换失败时的日志文案 */
+    protected abstract switchErrorLabel(target: string): string;
 
     queryMode(): 'zh' | 'en' {
         return this.currentTarget === this.englishTarget ? 'en' : 'zh';
@@ -361,141 +349,99 @@ class Fcitx5Manager implements LinuxIMEManager {
     /**
      * Async mode query for polling (non-blocking)
      */
-    async queryModeAsync(envPath: string): Promise<'zh' | 'en'> {
+    async queryModeAsync(): Promise<'zh' | 'en'> {
         try {
-            const result = await runBashAsync('fcitx5-remote -n', envPath, 1000);
-            const target = result || this.englishTarget;
-            this.currentTarget = target;
-            return target === this.englishTarget ? 'en' : 'zh';
+            const result = await runBashAsync(this.queryCommand, this.envPath, QUERY_TIMEOUT_MS);
+            this.currentTarget = result || this.englishTarget;
+            return this.queryMode();
         } catch {
-            return this.queryMode(); // Fallback to sync
+            return this.queryMode(); // Fallback to cached sync state
         }
     }
 
     switchToEnglish(): SwitchResult {
-        if (this.currentTarget === this.englishTarget) {
-            return { success: true, method: 'skip' };
-        }
-        this.currentTarget = this.englishTarget;
-        this.runBash(FCITX5_SWITCH_SCRIPT, [this.englishTarget], `fcitx5-remote -s ${this.englishTarget}`);
-        return { success: true, method: 'fcitx5' };
+        return this.switchTo(this.englishTarget);
     }
 
     switchToChinese(): SwitchResult {
-        if (this.currentTarget === this.chineseTarget) {
-            return { success: true, method: 'skip' };
-        }
-        this.currentTarget = this.chineseTarget;
-        this.runBash(FCITX5_SWITCH_SCRIPT, [this.chineseTarget], `fcitx5-remote -s ${this.chineseTarget}`);
-        return { success: true, method: 'fcitx5' };
+        return this.switchTo(this.chineseTarget);
+    }
+
+    queryFromSystem(): string {
+        const result = this.runBash(this.queryCommand, [], this.queryErrorLabel);
+        return result || this.englishTarget;
     }
 
     syncFromSystem(): void {
         const systemTarget = this.queryFromSystem();
         if (systemTarget !== this.currentTarget) {
-            this.logger.info(`[Fcitx5] Sync: ${this.currentTarget} → ${systemTarget}`);
+            this.logger.info(`[${this.logTag}] Sync: ${this.currentTarget} → ${systemTarget}`);
             this.currentTarget = systemTarget;
         }
     }
 
-    queryFromSystem(): string {
-        const result = this.runBash('fcitx5-remote -n', [], 'fcitx5-remote -n');
-        return result || this.englishTarget;
+    // ========== Private ==========
+
+    private switchTo(target: string): SwitchResult {
+        if (this.currentTarget === target) {
+            return { success: true, method: 'skip' };
+        }
+        this.currentTarget = target;
+        this.runBash(this.switchScript, [target], this.switchErrorLabel(target));
+        return { success: true, method: this.switchMethod };
     }
 
     private runBash(script: string, args: string[], label: string): string {
         try {
-            return runBash(script, args, this.envPath, 1000);
+            return runBash(script, args, this.envPath, QUERY_TIMEOUT_MS);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            this.logger.error(`[Fcitx5] ${label} failed: ${message}`);
+            this.logger.error(`[${this.logTag}] ${label} failed: ${message}`);
             return '';
         }
     }
+}
+
+// ========== Fcitx5 Manager ==========
+
+const FCITX5_SWITCH_SCRIPT = `fcitx5-remote -s "$1"`;
+
+class Fcitx5Manager extends CommandLineImeManager {
+    constructor(logger: LogSink, envPath: string) {
+        super(logger, envPath, readFcitx5Profile(logger));
+        this.logInitialState();
+    }
+
+    protected get logTag(): string { return 'Fcitx5'; }
+    protected get switchMethod(): string { return 'fcitx5'; }
+    protected get queryCommand(): string { return 'fcitx5-remote -n'; }
+    protected get switchScript(): string { return FCITX5_SWITCH_SCRIPT; }
+    protected get queryErrorLabel(): string { return 'fcitx5-remote -n'; }
+    protected switchErrorLabel(target: string): string { return `fcitx5-remote -s ${target}`; }
 }
 
 // ========== IBus Manager ==========
 
 const IBUS_ENGINE_SCRIPT = `ibus engine "$1" &> /dev/null`;
 
-class IBusManager implements LinuxIMEManager {
-    private logger: LogSink;
-    private envPath: string;
-    private currentMode: 'zh' | 'en';
-    private englishEngine: string;
-    private chineseEngine: string;
-
+class IBusManager extends CommandLineImeManager {
     constructor(logger: LogSink, envPath: string) {
-        this.logger = logger;
-        this.envPath = envPath;
+        super(logger, envPath, IBusManager.readTargets());
+        this.logInitialState();
+    }
+
+    private static readTargets(): IMETargets {
         const config = vscode.workspace.getConfiguration('auto-ime.ibus');
-        this.englishEngine = config.get<string>('englishEngine') || 'xkb:us::eng';
-        this.chineseEngine = config.get<string>('chineseEngine') || 'libpinyin';
-        const systemName = this.queryFromSystem();
-        this.currentMode = systemName === this.englishEngine ? 'en' : 'zh';
-        logger.info(`[IBus] Initial state: ${this.currentMode}`);
+        return {
+            english: config.get<string>('englishEngine') || 'xkb:us::eng',
+            chinese: config.get<string>('chineseEngine') || 'libpinyin',
+        };
     }
 
-    getEnglishEngine(): string { return this.englishEngine; }
-    getChineseEngine(): string { return this.chineseEngine; }
-
-    queryMode(): 'zh' | 'en' {
-        return this.currentMode;
-    }
-
-    /**
-     * Async mode query for polling (non-blocking)
-     */
-    async queryModeAsync(envPath: string): Promise<'zh' | 'en'> {
-        try {
-            const result = await runBashAsync('ibus engine', envPath, 1000);
-            const systemName = result || this.englishEngine;
-            this.currentMode = systemName === this.englishEngine ? 'en' : 'zh';
-            return this.currentMode;
-        } catch {
-            return this.queryMode(); // Fallback to sync
-        }
-    }
-
-    switchToEnglish(): SwitchResult {
-        if (this.currentMode === 'en') {
-            return { success: true, method: 'skip' };
-        }
-        this.currentMode = 'en';
-        this.runBash(IBUS_ENGINE_SCRIPT, [this.englishEngine], `ibus engine ${this.englishEngine}`);
-        return { success: true, method: 'ibus' };
-    }
-
-    switchToChinese(): SwitchResult {
-        if (this.currentMode === 'zh') {
-            return { success: true, method: 'skip' };
-        }
-        this.currentMode = 'zh';
-        this.runBash(IBUS_ENGINE_SCRIPT, [this.chineseEngine], `ibus engine ${this.chineseEngine}`);
-        return { success: true, method: 'ibus' };
-    }
-
-    queryFromSystem(): string {
-        const result = this.runBash('ibus engine', [], 'ibus engine query');
-        return result || this.englishEngine;
-    }
-
-    syncFromSystem(): void {
-        const systemName = this.queryFromSystem();
-        const systemMode: 'zh' | 'en' = systemName === this.englishEngine ? 'en' : 'zh';
-        if (systemMode !== this.currentMode) {
-            this.logger.info(`[IBus] Sync: ${this.currentMode} → ${systemMode}`);
-            this.currentMode = systemMode;
-        }
-    }
-
-    private runBash(script: string, args: string[], label: string): string {
-        try {
-            return runBash(script, args, this.envPath, 1000);
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            this.logger.error(`[IBus] ${label} failed: ${message}`);
-            return '';
-        }
-    }
+    protected get logTag(): string { return 'IBus'; }
+    protected get switchMethod(): string { return 'ibus'; }
+    protected get queryCommand(): string { return 'ibus engine'; }
+    protected get switchScript(): string { return IBUS_ENGINE_SCRIPT; }
+    protected get queryErrorLabel(): string { return 'ibus engine query'; }
+    protected switchErrorLabel(target: string): string { return `ibus engine ${target}`; }
 }

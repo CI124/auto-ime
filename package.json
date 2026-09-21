@@ -99,17 +99,22 @@
     "precompile": "node scripts/check-env.js",
     "compile": "node esbuild.js",
     "prewatch": "node scripts/check-env.js",
-    "watch": "node esbuild.js --watch"
+    "watch": "node esbuild.js --watch",
+    "pretest": "node esbuild.js",
+    "test": "node test/ast-analyzer-test.js && node test/controller-test.js && node test/vim-mode-test.js && node test/mock-koffi-test.js && node test/mock-tsf-test.js && node test/mock-linux-ime-test.js",
+    "test-env": "node scripts/launch-test-env.js",
+    "test-env:reuse": "node scripts/launch-test-env.js --skip-build --reuse"
   },
   "dependencies": {
-    "@koromix/koffi-win32-x64": "^3.0.2",
     "koffi": "^3.0.2",
     "web-tree-sitter": "^0.22.6"
   },
   "devDependencies": {
-    "@types/node": "18.x",
+    "@types/node": "^22.10.0",
     "@types/vscode": "^1.80.0",
-    "esbuild": "^0.18.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.25.0",
     "typescript": "^5.1.3"
   }
 }

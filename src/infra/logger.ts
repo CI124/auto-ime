@@ -51,15 +51,3 @@ export function createLogger(
         error: (msg) => write('ERROR', msg),
     };
 }
-
-/**
- * 创建空 Logger（用于测试或降级场景）
- */
-export function createNullLogger(): LogSink {
-    return {
-        debug: () => {},
-        info: () => {},
-        warn: () => {},
-        error: () => {},
-    };
-}

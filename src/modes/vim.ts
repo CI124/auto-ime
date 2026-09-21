@@ -6,7 +6,7 @@
 
 import * as vscode from 'vscode';
 import { IModeListener, ModeContext } from '../core/types';
-import { LogSink } from '../logger';
+import { LogSink } from '../infra/logger';
 
 export class VimModeListener implements IModeListener {
     readonly name = 'vim';
@@ -20,6 +20,10 @@ export class VimModeListener implements IModeListener {
 
     register(ctx: ModeContext): vscode.Disposable[] {
         const disposables: vscode.Disposable[] = [];
+
+        // 保证无论模式切换还是 deactivate，20ms 的 cursorStyle 探测定时器都能被清理
+        // （扩展只 dispose() 本数组，从不调用 listener.dispose()，故必须在此登记）
+        disposables.push({ dispose: () => this.stopModeDetection() });
 
         // ESC hijack: force English + forward to Vim
         const escapeCommand = vscode.commands.registerCommand('auto-ime.escape', () => {
@@ -59,8 +63,7 @@ export class VimModeListener implements IModeListener {
             // Detect Insert → Normal: force English
             if (this.lastCursorStyle === vscode.TextEditorCursorStyle.Line &&
                 currentCursorStyle === vscode.TextEditorCursorStyle.Block) {
-                ctx.forceEnglish();
-                this.startModeDetection(ctx);
+                this.onInsertToNormal(ctx);
             }
             this.lastCursorStyle = currentCursorStyle;
 
@@ -92,8 +95,7 @@ export class VimModeListener implements IModeListener {
             } else if (this.lastCursorStyle === vscode.TextEditorCursorStyle.Line &&
                        currentCursor === vscode.TextEditorCursorStyle.Block) {
                 // Insert → Normal
-                ctx.forceEnglish();
-                this.startModeDetection(ctx);
+                this.onInsertToNormal(ctx);
                 this.lastCursorStyle = currentCursor;
             }
         });
@@ -112,10 +114,21 @@ export class VimModeListener implements IModeListener {
         return editor.options.cursorStyle === vscode.TextEditorCursorStyle.Line;
     }
 
+    /**
+     * Insert → Normal 转换的唯一入口：强制切英文并启动模式探测。
+     * selectionChange 与 optionsChange 两条路径都用它，避免重复的 forceEnglish + startModeDetection。
+     */
+    private onInsertToNormal(ctx: ModeContext): void {
+        ctx.forceEnglish();
+        this.startModeDetection(ctx);
+    }
+
     private startModeDetection(ctx: ModeContext): void {
         if (this.modeDetectionTimer) return;
         this.checkModeChange(ctx);
-        this.modeDetectionTimer = setInterval(() => this.checkModeChange(ctx), 20);
+        // 主检测依赖 onDidChangeTextEditorOptions 事件；此处仅作兵底轮询（进入 Normal
+        // 后监视游标样式是否回到 Insert），40ms 已足够及时且比旧 20ms 省一半开销
+        this.modeDetectionTimer = setInterval(() => this.checkModeChange(ctx), 40);
     }
 
     private stopModeDetection(): void {
