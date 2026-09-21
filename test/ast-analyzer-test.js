@@ -265,6 +265,24 @@ async function main() {
         assert.strictEqual(r.match, false);
     });
 
+    // 巡检 G：不匹配必须与“没能力判定”可区分，否则 controller 会把“不知道”当成“是代码”
+    test('supports(): 已登记语言 true，未登记（含 markdown/plaintext）false', () => {
+        assert.strictEqual(shared.supports('typescript'), true);
+        assert.strictEqual(shared.supports('shellscript'), true);
+        assert.strictEqual(shared.supports('markdown'), false, 'markdown 无 wasm，必须报不支持');
+        assert.strictEqual(shared.supports('plaintext'), false);
+        assert.strictEqual(shared.supports('unknown-lang-xyz'), false);
+    });
+
+    test('supports() 与 LANGUAGE_PROFILES 一一对应（不靠手工同步清单）', () => {
+        // 每个 bundle 里登记的语言都必须 supports=true，防“加了表填了 wasm 但方法忘了同步”
+        const mapped = ['typescript', 'typescriptreact', 'javascript', 'javascriptreact', 'python',
+            'go', 'rust', 'c', 'cpp', 'html', 'css', 'lua', 'java', 'kotlin', 'shellscript'];
+        for (const id of mapped) {
+            assert.strictEqual(shared.supports(id), true, `${id} 应被支持`);
+        }
+    });
+
     // ---- 6: 同一实例连续分析（真实运行形态）----
     section('📦 6: 同一实例连续分析（真实运行形态）');
     test('增量解析: 同文档连续两次解析结果稳定为 comment', async () => {

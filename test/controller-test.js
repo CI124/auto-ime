@@ -65,6 +65,7 @@ function makeAnalyzer(fastResult, astResult) {
         stats,
         init() {},
         dispose() {},
+        supports: () => true,
         isCursorInCommentFast() { stats.fastCalled++; return fastResult; },
         async isCursorInCommentOrString() { stats.astCalled++; return astResult; },
     };
@@ -76,6 +77,7 @@ function makeThrowingAnalyzer(mode) {
         stats,
         init() {},
         dispose() {},
+        supports: () => true,
         isCursorInCommentFast() {
             stats.fastCalled++;
             if (mode === 'fast-throw') throw new Error('boom-fast');
@@ -141,9 +143,10 @@ const queue = [];
 const unhandledRejections = [];
 function test(name, fn) { queue.push({ name, fn }); }
 
-function build({ fast = null, ast = { match: false, type: null }, manualOverride = false, analyzer = null } = {}) {
+function build({ fast = null, ast = { match: false, type: null }, manualOverride = false, analyzer = null, supported = true } = {}) {
     const adapter = makeAdapter();
     const analyzerImpl = analyzer || makeAnalyzer(fast, ast);
+    if (!analyzer && !supported) analyzerImpl.supports = () => false;
     const tracker = makeTracker();
     tracker.state.manualOverride = manualOverride;
     const statusBar = makeStatusBar();
@@ -275,6 +278,26 @@ async function run() {
         await controller.analyzeAndSwitch(makeEditor());
         await sleep(60);
         assert.ok(logger.lines.some((l) => l.includes('boom-fast')), '应以 ERROR 记录调度/分析失败');
+    });
+
+    // ---- 巡检 G：无判定能力的语言一律不干预（不得猜“是代码”然后抢切英文）----
+    test('未映射语言（如 markdown）→ 不做任何切换、不分析', async () => {
+        const { adapter, analyzer, controller } = build({ ast: { match: false, type: null }, supported: false });
+        controller.updateStatusBar('zh'); // 置于中文态：若能“猜代码”就会切回英文
+        await controller.analyzeAndSwitch(makeEditor('markdown', 4));
+        await sleep(50);
+        assert.strictEqual(adapter.calls.en, 0, '不得为了“回英文”而抢切用户正在写的中文');
+        assert.strictEqual(adapter.calls.zh, 0);
+        assert.strictEqual(analyzer.stats.fastCalled, 0, '不该走快路径');
+        assert.strictEqual(analyzer.stats.astCalled, 0, '不该走 AST');
+        assert.strictEqual(controller.getCurrentMode(), 'zh', '模式保持原样');
+    });
+
+    test('已映射语言仍正常处理（supports 不是全局短路）', async () => {
+        const { adapter, controller } = build({ ast: { match: true, type: 'comment' } });
+        await controller.analyzeAndSwitch(makeEditor('typescript', 4));
+        await sleep(50);
+        assert.strictEqual(adapter.calls.zh, 1);
     });
 
     test('全程无未处理 Promise rejection（C3 锁行为）', async () => {

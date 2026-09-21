@@ -229,6 +229,14 @@ export class ASTAnalyzer implements IAnalyzer {
     }
 
     /**
+     * 该语言是否已登记 wasm 与 query，即本分析器能否给出可信结论。
+     * 与 LANGUAGE_PROFILES 共用同一张表 —— 新增语言只改那一处，本方法自动跟上。
+     */
+    public supports(languageId: string): boolean {
+        return LANGUAGE_PROFILES[languageId] !== undefined;
+    }
+
+    /**
      * 快速文本级注释检测（同步，无 AST 开销）
      * 返回: true = 确定在注释中, false = 确定不在, null = 不确定需 AST
      */

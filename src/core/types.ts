@@ -69,6 +69,16 @@ export interface IAnalyzer {
     init(): void | Promise<void>;
 
     /**
+     * 对该 languageId 是否有【可靠的判定能力】（已登记 wasm 与 query）。
+     *
+     * 为什么需要单独一个方法：isCursorInCommentOrString 对未知语言只能返回
+     * { match: false }，而 false 在调用方看来与“确认是代码”无法区分。没有这个信号，
+     * markdown / plaintext 里写中文会被当成代码抢切回英文。所以上层先用本方法
+     * 判断“要不要管”，再把 false 当作真正的“不是注释/字符串”。
+     */
+    supports(languageId: string): boolean;
+
+    /**
      * 快速文本级注释检测（同步，无 AST 开销）
      * @returns true=确定在注释中, false=确定不在, null=不确定，需 AST
      */

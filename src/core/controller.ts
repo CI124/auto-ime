@@ -123,6 +123,15 @@ export class IMEController {
         if (position.line >= document.lineCount) return;
         const cursor = `L${position.line + 1}:${position.character}`;
         const lang = document.languageId;
+
+        // 无判定能力的语言一律不干预（方案 A 的“不干预优于误伤”）：
+        // AST 对未登记语言只能返回 match:false，而“不知道”不等于“确认是代码”。
+        // 以前 markdown/plaintext 会因此被当成代码抢切回英文，用户连笔记都写不了。
+        if (!this.analyzer.supports(lang)) {
+            this.logger.debug(`[${cursor}] ${lang} → 无判定能力，不干预`);
+            return;
+        }
+
         const vimMode = this.isVimMode() ? (this.isInInsertMode(editor) ? 'I' : 'N') : '-';
 
         // Manual override: resume auto analysis when cursor moves to different line
