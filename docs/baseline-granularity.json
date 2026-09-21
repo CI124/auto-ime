@@ -1,7 +1,6 @@
 {
   "note": "由 node scripts/check-granularity.js --update-baseline 生成。登记的存量超限文件只许变小不许变大（冻结增长）。",
   "files": {
-    "src/platforms/linux/adapter.ts": 448,
     "test/mock-linux-ime-test.js": 635
   }
 }

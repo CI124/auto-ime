@@ -78,6 +78,14 @@ export class IMEStateTracker {
     }
 
     /**
+     * 按窗口焦点暂停/恢复观察。本类不自建定时器，因此只是转发：
+     * 失焦时适配器的轮询探针可以完全不起（Linux 那边每次是一个子进程）。
+     */
+    setObserving(observing: boolean): void {
+        this.adapter.setObserving?.(observing);
+    }
+
+    /**
      * Set callback for manual switch detection
      */
     setOnChangeCallback(callback: (newIME: string) => void): void {

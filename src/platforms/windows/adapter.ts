@@ -126,6 +126,19 @@ export class WindowsAdapter implements IPlatformAdapter {
         this.poller = null;
     }
 
+    /**
+     * 失焦暂停轮询。单次 GetKeyboardLayout 很廉价，但没有焦点时读到也不会触发任何动作，
+     * 持续轮询只是把开销挂在一个对用户无意义的状态上。
+     */
+    setObserving(observing: boolean): void {
+        if (!this.poller) return;
+        if (observing) {
+            this.poller.resume();
+        } else {
+            this.poller.pause();
+        }
+    }
+
     dispose(): void {
         this.stopListening();
         this.strategy = null;

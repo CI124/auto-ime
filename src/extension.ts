@@ -233,6 +233,9 @@ class ActivationSession {
     private registerFocusSync(context: vscode.ExtensionContext): void {
         context.subscriptions.push(
             vscode.window.onDidChangeWindowState((e) => {
+                // 失焦先暂停外部切换轮询：Linux 那边每 100ms 是一个 bash 子进程，
+                // 而没有焦点时读到变化也不会采取任何动作。获得焦点时恢复并立即同步一次。
+                this.tracker.setObserving(e.focused);
                 if (!e.focused) return;
 
                 this.tracker.syncState();

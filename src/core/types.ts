@@ -45,6 +45,13 @@ export interface IPlatformAdapter {
     /** Stop observing external switches */
     stopListening?(): void;
 
+    /**
+     * 按窗口焦点暂停/恢复观察（成本考虑：Linux 探针每 100ms 是一个 bash 子进程）。
+     * 语义上【不是】stopListening：基线保留，失焦期间的真实切换会在恢复后上报一次。
+     * 不提供此方法的适配器（无轮询）无需处理，调用方自行降级为 no-op。
+     */
+    setObserving?(observing: boolean): void;
+
     /** Release resources */
     dispose?(): void;
 }

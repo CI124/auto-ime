@@ -37,6 +37,7 @@ const mockState = {
     logLines: [],
     keybdCalls: [],            // 记录 keybd_event 调用
     failToggle: false,
+    langIdReads: 0,            // 记录 GetKeyboardLayout 读取次数（校轮询是否真的停了）
 };
 
 function resetMock() {
@@ -49,6 +50,7 @@ function resetMock() {
     mockState.logLines = [];
     mockState.keybdCalls = [];
     mockState.failToggle = false;
+    mockState.langIdReads = 0;
 }
 
 function createLogger() {
@@ -74,7 +76,10 @@ function createMockKoffi() {
             if (Array.isArray(outPid)) outPid[0] = 1234;
             return 5678;
         },
-        'HKL __stdcall GetKeyboardLayout(DWORD)': () => BigInt(mockState.currentLangId),
+        'HKL __stdcall GetKeyboardLayout(DWORD)': () => {
+            mockState.langIdReads++;
+            return BigInt(mockState.currentLangId);
+        },
         'int __stdcall GetKeyboardLayoutList(int, void*)': (count, buf) => {
             const layouts = mockState.installedLayouts;
             if (count === 0) return layouts.length;
@@ -435,6 +440,30 @@ test('双键盘：startListening 轮询 Language ID，外部切换时回调', as
 
     assert.ok(seen.includes('zh'), `应回调外部切换到 zh，实际 ${JSON.stringify(seen)}`);
     assert.ok(!logged('not observable'), '双键盘不应记为不可观察');
+});
+
+test('双键盘：setObserving(false) 暂停轮询、true 恢复（失焦不空耗 FFI）', async () => {
+    resetMock();
+    mockState.installedLayouts = [1033, 2052];
+    mockState.currentLangId = 1033;
+    const adapter = new WindowsAdapter();
+    adapter.init(createLogger());
+
+    const source = await adapter.startListening(() => {});
+    assert.strictEqual(source, 'adapter-polling');
+    await sleep(60);
+    const whileRunning = mockState.langIdReads;
+    assert.ok(whileRunning >= 2, `轮询中应已多次读取 Language ID，实际 ${whileRunning}`);
+
+    adapter.setObserving(false);
+    await sleep(80);
+    assert.strictEqual(mockState.langIdReads, whileRunning,
+        `失焦后不得继续读取（${whileRunning} → ${mockState.langIdReads}）`);
+
+    adapter.setObserving(true);
+    await sleep(60);
+    assert.ok(mockState.langIdReads > whileRunning, '恢复焦点后应继续轮询');
+    adapter.dispose();
 });
 
 test('syncState 不抛异常（无跨进程读取，状态保持跟踪）', () => {

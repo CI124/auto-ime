@@ -102,7 +102,7 @@
     "compile": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "pretest": "node esbuild.js",
-    "test": "node test/ast-analyzer-test.js && node test/controller-test.js && node test/vim-mode-test.js && node test/mock-koffi-test.js && node test/mock-tsf-test.js && node test/mock-linux-ime-test.js",
+    "test": "node test/ast-analyzer-test.js && node test/controller-test.js && node test/poller-test.js && node test/vim-mode-test.js && node test/mock-koffi-test.js && node test/mock-tsf-test.js && node test/mock-linux-ime-test.js",
     "test-env": "node scripts/launch-test-env.js",
     "test-env:reuse": "node scripts/launch-test-env.js --skip-build --reuse"
   },

@@ -134,14 +134,9 @@ export class IMEController {
 
         const vimMode = this.isVimMode() ? (this.isInInsertMode(editor) ? 'I' : 'N') : '-';
 
-        // Manual override: resume auto analysis when cursor moves to different line
-        if (this.stateTracker.isManualOverride()) {
-            if (this.stateTracker.isDifferentPosition(position.line)) {
-                this.logger.info(`[${cursor}] ${lang} vim=${vimMode} → manual override resume`);
-                this.stateTracker.resetManualOverride();
-            } else {
-                return;
-            }
+        // 手动覆盖：游标换行后恢复自动分析，同行则保持用户的选择不动
+        if (!this.passManualOverride(position, lang, vimMode, cursor)) {
+            return;
         }
 
         this.stateTracker.updatePosition(position.line);
@@ -176,6 +171,24 @@ export class IMEController {
                 this.switchTo('en');
             }
         }
+    }
+
+    /**
+     * manualOverride 闸门：返回 false 表示本轮不得继续分析（用户手动选择优先）。
+     * 从 doAnalyze 抽出来是为了让两者各自守在函数粒度软档内。
+     */
+    private passManualOverride(
+        position: vscode.Position,
+        lang: string,
+        vimMode: string,
+        cursor: string,
+    ): boolean {
+        if (!this.stateTracker.isManualOverride()) return true;
+        if (!this.stateTracker.isDifferentPosition(position.line)) return false;
+
+        this.logger.info(`[${cursor}] ${lang} vim=${vimMode} → manual override resume`);
+        this.stateTracker.resetManualOverride();
+        return true;
     }
 
     /**

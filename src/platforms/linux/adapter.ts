@@ -16,124 +16,19 @@
  * Fcitx4 removed: deprecated project, users should migrate to Fcitx5
  */
 
-import { exec, execFileSync } from 'child_process';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
 import * as vscode from 'vscode';
 import { IPlatformAdapter, SwitchResult, ExternalSwitchSource } from '../../core/types';
 import { ValuePoller } from '../../core/poller';
 import { LogSink } from '../../infra/logger';
-
-// ========== PATH Helper ==========
-
-function buildEnvPath(): string {
-    const existing = process.env.PATH || '';
-    const sep = ':';
-    const parts = existing.split(sep).filter(Boolean);
-    const extras = ['/usr/local/bin', '/usr/bin', '/bin'];
-    for (const extra of extras) {
-        if (!parts.includes(extra)) {
-            parts.push(extra);
-        }
-    }
-    return parts.join(sep);
-}
-
-// ========== Bash Helper ==========
-
-/** 输入法框架探测（command -v）允许耗时较长 */
-const DETECT_TIMEOUT_MS = 5000;
-/** 状态查询 / 切换命令必须快速返回，不阻塞编辑器 */
-const QUERY_TIMEOUT_MS = 1000;
-
-function runBash(script: string, args: string[], envPath: string, timeout: number): string {
-    return execFileSync('bash', ['-c', script, 'bash_script.sh', ...args], execOptions(timeout, envPath)).trim();
-}
-
-function runBashAsync(script: string, envPath: string, timeout: number): Promise<string> {
-    return new Promise((resolve, reject) => {
-        exec(`bash -c '${script}'`, execOptions(timeout, envPath), (error, stdout, stderr) => {
-            if (error) {
-                reject(error);
-            } else {
-                resolve(stdout.trim());
-            }
-        });
-    });
-}
-
-function tryExecBash(script: string, envPath: string, timeout: number): boolean {
-    try {
-        execFileSync('bash', ['-c', script, 'bash_script.sh'], execOptions(timeout, envPath));
-        return true;
-    } catch {
-        return false;
-    }
-}
-
-/** runBash / runBashAsync / tryExecBash 共用的 exec 选项（编码 / 超时 / PATH 环境） */
-function execOptions(timeout: number, envPath: string) {
-    return {
-        encoding: 'utf-8' as const,
-        timeout,
-        env: { ...process.env, PATH: envPath },
-    };
-}
-
-// ========== Fcitx5 Profile Reader ==========
-
-function readFcitx5Profile(logger: LogSink): { english: string; chinese: string } {
-    const defaultEnglish = 'keyboard-us';
-    const defaultChinese = 'pinyin';
-    const profilePath = path.join(os.homedir(), '.config', 'fcitx5', 'profile');
-
-    try {
-        if (!fs.existsSync(profilePath)) {
-            logger.info(`[Linux] fcitx5 profile not found: ${profilePath}`);
-            return { english: defaultEnglish, chinese: defaultChinese };
-        }
-
-        const content = fs.readFileSync(profilePath, 'utf-8');
-        const lines = content.split(/\r?\n/);
-        const allMethods: string[] = [];
-        let inGroupItems = false;
-
-        for (const raw of lines) {
-            const line = raw.trim();
-            if (!line || line.startsWith('#')) continue;
-
-            if (line.startsWith('[')) {
-                inGroupItems = /^\[Groups\/0\/Items\/\d+\]$/.test(line);
-                continue;
-            }
-
-            if (!inGroupItems) continue;
-
-            if (line.startsWith('Name=') && !line.startsWith('Name=默认')) {
-                allMethods.push(line.substring('Name='.length).trim());
-            }
-        }
-
-        const englishCandidates = allMethods.filter(m => m.includes('keyboard'));
-        const english = englishCandidates.includes('keyboard-us')
-            ? 'keyboard-us'
-            : (englishCandidates[0] || defaultEnglish);
-
-        const chinesePriority = ['rime', 'pinyin', 'shuangpin'];
-        const chineseCandidates = allMethods.filter(m => !m.includes('keyboard'));
-        const chinese = chinesePriority.find(p => chineseCandidates.includes(p))
-            || chineseCandidates[0]
-            || defaultChinese;
-
-        logger.info(`[Linux] fcitx5 profile loaded: english=${english}, chinese=${chinese}`);
-        return { english, chinese };
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logger.error(`[Linux] Failed to read fcitx5 profile: ${message}`);
-        return { english: defaultEnglish, chinese: defaultChinese };
-    }
-}
+import {
+    DETECT_TIMEOUT_MS,
+    QUERY_TIMEOUT_MS,
+    buildEnvPath,
+    runBash,
+    runBashAsync,
+    tryExecBash,
+} from './shell';
+import { readFcitx5Profile } from './fcitx5-profile';
 
 // ========== Adaptive Polling ==========
 
@@ -234,6 +129,20 @@ export class LinuxAdapter implements IPlatformAdapter {
         this.poller.stop();
         this.poller = null;
         this.logger.info('[Linux] Polling stopped');
+    }
+
+    /**
+     * 失焦暂停轮询（收益比 Windows 大得多：这里的探针每次是一个 bash 子进程）。
+     * 恢复时把“最后活动时刻”刷新为现在，因此先回到活跃间隔，再按阈渐退到空闲间隔。
+     */
+    setObserving(observing: boolean): void {
+        if (!this.poller) return;
+        if (observing) {
+            this.lastActivityTime = Date.now();
+            this.poller.resume();
+        } else {
+            this.poller.pause();
+        }
     }
 
     dispose(): void {
