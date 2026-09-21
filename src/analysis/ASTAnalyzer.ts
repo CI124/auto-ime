@@ -114,8 +114,6 @@ export class ASTAnalyzer implements IAnalyzer {
     private outputChannel: vscode.OutputChannel;
     private logger: LogSink;
 
-    // 增量解析: 缓存上一次的 Tree，供 parser.parse(text, oldTree) 使用
-    private lastTree: Parser.Tree | null = null;
     // 按 (uri, version) 缓存整篇文本：块注释快路径与 AST 路径都需要整篇 getText()，
     // 同一文件版本内游标多次移动时复用，避免每次事件重新物化整篇字符串
     private cachedDocKey = '';
@@ -261,7 +259,8 @@ export class ASTAnalyzer implements IAnalyzer {
                 // 用带 fromIndex 的 lastIndexOf 直接在游标前区间搜索，避免再复制一份子串
                 const lastBlockOpen = fullText.lastIndexOf(open, Math.max(0, offset - 1));
                 const lastBlockClose = fullText.lastIndexOf(close, Math.max(0, offset - 1));
-                if (lastBlockOpen >= 0 && lastBlockOpen > lastBlockClose) {
+                if (lastBlockOpen >= 0 && lastBlockOpen > lastBlockClose
+                    && !this.markerLineHasUnclosedQuote(fullText, lastBlockOpen)) {
                     return true;
                 }
             }
@@ -295,60 +294,41 @@ export class ASTAnalyzer implements IAnalyzer {
         this.parser.setLanguage(lang);
         const text = this.getDocumentText(document);
 
-        let tree: Parser.Tree;
+        // 每次都全量解析，不复用上一次的 Tree。原因（巡检 C1，见 docs/adr/0003）：
+        // 1) 增量解析必须先 tree.edit() 告知编辑器变更区间，本扩展没有把 contentChanges
+        //    透传进来；缺 edit() 时 tree-sitter 会复用区间已失效的子树，实测在游标上方
+        //    插入 3 行后，注释节点会退化成 "functio"@0:0 —— 判定直接错位。
+        // 2) lastTree 是实例级单槽，切换文件/语言时必然跨语法复用，而这不抛异常
+        //    （只得到一个 root=ERROR 的树），因此“失败降级全量解析”的 catch 分支永不触发。
+        // 真增量（按 uri 持有 Tree + 正确 edit）成本可控，列为后续优化，不在“先保正确”这一步做。
+        const tree = this.parser.parse(text);
+        let result: { match: boolean; type: string | null } = { match: false, type: null };
         try {
-            // 增量解析: 利用上一次的 Tree 仅重新解析变更部分
-            tree = this.parser.parse(text, this.lastTree ?? undefined);
-        } catch (error) {
-            // 增量解析失败时降级为全量解析
-            try {
-                tree = this.parser.parse(text);
-            } catch {
-                return { match: false, type: null };
+            // 若已有更新的分析请求，丢弃本次结果
+            if (myGeneration === this.analysisGeneration) {
+                result = findCapture(query.matches(tree.rootNode), position.line, position.character);
             }
+        } finally {
+            // matches 里的 SyntaxNode 持有本棵树的内存，必须扫描完再释放
+            tree.delete();
         }
+        return result;
+    }
 
-        // 释放旧树，缓存新树
-        this.lastTree?.delete();
-        this.lastTree = tree;
-
-        // 若已有更新的分析请求，丢弃本次结果
-        if (myGeneration !== this.analysisGeneration) {
-            return { match: false, type: null };
-        }
-
-        const row = position.line;
-        const column = position.character;
-
-        // 使用 Query 匹配所有注释/字符串节点
-        const matches = query.matches(tree.rootNode);
-
-        for (const match of matches) {
-            for (const capture of match.captures) {
-                const node = capture.node;
-
-                if (!containsPosition(node, row, column)) continue;
-
-                // 注释特殊处理：光标在注释起始位置之前时，视为不在注释中
-                const atOrBeforeCommentStart = capture.name === 'comment'
-                    && node.type.includes('comment')
-                    && row === node.startPosition.row
-                    && column <= node.startPosition.column;
-                if (atOrBeforeCommentStart) continue;
-
-                return { match: true, type: capture.name };
-            }
-        }
-
-        return { match: false, type: null };
+    /**
+     * 注释标记所在行、标记之前的引号是否未闭合。
+     * 用于挡掉 `const re = "/*";` 这类“注释标记其实是字符串内容”的快路径假阳性：
+     * 一旦本行引号不成对，快路径不下结论（返回 null），交给 AST 判定。
+     */
+    private markerLineHasUnclosedQuote(fullText: string, markerIndex: number): boolean {
+        const lineStart = fullText.lastIndexOf('\n', markerIndex - 1) + 1;
+        return hasUnclosedQuote(fullText.slice(lineStart, markerIndex));
     }
 
     /**
      * 释放所有资源。扩展停用时调用。
      */
     public dispose(): void {
-        this.lastTree?.delete();
-        this.lastTree = null;
         this.queryCache.forEach(q => q?.delete());
         this.queryCache.clear();
         this.languageMap.clear();
@@ -362,6 +342,31 @@ export class ASTAnalyzer implements IAnalyzer {
 function hasUnclosedQuote(textBeforeMarker: string): boolean {
     const count = (re: RegExp) => (textBeforeMarker.match(re) || []).length;
     return count(/"/g) % 2 !== 0 || count(/'/g) % 2 !== 0 || count(/`/g) % 2 !== 0;
+}
+
+/** 在 Query 匹配结果中找出包含 (row, column) 的第一个捕获；无则视为代码 */
+function findCapture(
+    matches: Parser.QueryMatch[],
+    row: number,
+    column: number,
+): { match: boolean; type: string | null } {
+    for (const match of matches) {
+        for (const capture of match.captures) {
+            const node = capture.node;
+
+            if (!containsPosition(node, row, column)) continue;
+
+            // 注释特殊处理：光标在注释起始位置之前时，视为不在注释中
+            const atOrBeforeCommentStart = capture.name === 'comment'
+                && node.type.includes('comment')
+                && row === node.startPosition.row
+                && column <= node.startPosition.column;
+            if (atOrBeforeCommentStart) continue;
+
+            return { match: true, type: capture.name };
+        }
+    }
+    return { match: false, type: null };
 }
 
 /** 节点的 [start, end) 区间（按行/列）是否包含给定位置 */

@@ -80,14 +80,15 @@ function makeLogger() {
 }
 
 let mockDocSeq = 0;
-function createMockDocument(text, languageId) {
+function createMockDocument(text, languageId, opts = {}) {
     const lines = text.split('\n');
     const id = ++mockDocSeq;
+    const uri = opts.uri || `file:///mock/doc-${id}`;
     return {
         languageId,
         // 提供唯一 uri/version，让 ASTAnalyzer 的 (uri,version) 文本缓存正确区分文档
-        uri: { toString: () => `file:///mock/doc-${id}` },
-        version: 0,
+        uri: { toString: () => uri },
+        version: opts.version ?? 0,
         getText: () => text,
         lineAt: (line) => ({ text: lines[line] }),
         offsetAt: (position) => {
@@ -120,8 +121,9 @@ async function main() {
     const shared = makeAnalyzer();
     await shared.init();
 
-    // 每个 AST 语义用例用【独立实例 + 全文解析】，避免跨文档复用 lastTree 造成的
-    // 增量解析污染（真实运行只在当前活动文档上增量解析）。
+    // 每个 AST 语义用例用独立实例，保证用例之间不共享 Language/Query 缓存。
+    // （旧注释称“避免跨文档复用 lastTree 的增量解析污染” —— 那个污染是真实缺陷，
+    //   已由 ASTAnalyzer 取消 lastTree 复用修复，并由§6 的同实例用例锁住，不能再靠测试规避。）
     async function astAnalyze(doc, position) {
         const an = makeAnalyzer();
         await an.init();
@@ -193,6 +195,13 @@ async function main() {
         const d = createMockDocument(text, 'typescript');
         assert.strictEqual(fastAnalyze(d, pos(1, 5), 'typescript'), true);
     });
+    // 回归守卫（巡检 C4）：字符串里的 /* 不是注释标记，不得让后面代码行被判为注释
+    test('Fast: 字符串内的 /* 不得判为块注释（回归假阳性）', () => {
+        const text = 'const re = "/*";\nconst y = compute(1);';
+        const d = createMockDocument(text, 'typescript');
+        const r = fastAnalyze(d, pos(1, 6), 'typescript');
+        assert.notStrictEqual(r, true, '第二行是代码，不能被 /* 字符串内容 拉进注释');
+    });
     test('Fast: 光标前仅空白 → false', () => {
         const d = createMockDocument('    const x = 42;', 'typescript');
         assert.strictEqual(fastAnalyze(d, pos(0, 2), 'typescript'), false);
@@ -256,8 +265,8 @@ async function main() {
         assert.strictEqual(r.match, false);
     });
 
-    // ---- 6: 增量解析（同一实例、同一文档，正确复用 lastTree） ----
-    section('📦 6: 增量解析（真实对象）');
+    // ---- 6: 同一实例连续分析（真实运行形态）----
+    section('📦 6: 同一实例连续分析（真实运行形态）');
     test('增量解析: 同文档连续两次解析结果稳定为 comment', async () => {
         const an = makeAnalyzer();
         await an.init();
@@ -275,6 +284,43 @@ async function main() {
             code += '\nconst tail = "appended"; // tail comment';
             const r2 = await an.isCursorInCommentOrString(createMockDocument(code, 'typescript'), pos(0, 5));
             assert.strictEqual(r2.type, 'comment', '增量解析后仍应在注释中');
+        } finally {
+            an.dispose();
+        }
+    });
+
+    // 回归守卫（巡检 C1）：游标上方插入行会让旧树节点区间整体错位。不传 tree.edit()
+    // 的所调“增量复用”会返回完全错位的节点（实测为 "functio"@0:0），必须不能影响判定。
+    test('同一实例: 游标上方插入行后仍应正确判为 comment', async () => {
+        const an = makeAnalyzer();
+        await an.init();
+        try {
+            const v1 = createMockDocument('// 顶部注释\nconst a = 1;\n', 'typescript');
+            const r1 = await an.isCursorInCommentOrString(v1, pos(0, 4));
+            assert.strictEqual(r1.type, 'comment', '基线：第一次判定应在注释中');
+            // 同一文档（同 uri）的新版本：顶部多了 3 行，注释从第 0 行移到第 3 行
+            const v2Text = 'function f(): void {\n  const z = 0;\n}\n// 顶部注释\nconst a = 1;\n';
+            const v2 = createMockDocument(v2Text, 'typescript', { uri: 'file:///mock/doc-same', version: 2 });
+            const r2 = await an.isCursorInCommentOrString(v2, pos(3, 4));
+            assert.deepStrictEqual(r2, { match: true, type: 'comment' },
+                '插入行后同一位置应仍判为 comment（旧树错位会返回 match:false）');
+        } finally {
+            an.dispose();
+        }
+    });
+
+    test('同一实例: 跨语言连续分析互不污染', async () => {
+        const an = makeAnalyzer();
+        await an.init();
+        try {
+            const tsDoc = createMockDocument('const a = 1; // ts 注释\n', 'typescript');
+            const rTs = await an.isCursorInCommentOrString(tsDoc, pos(0, 18));
+            assert.strictEqual(rTs.type, 'comment', 'TS 基线');
+            // 切到 Python 文档：复用 TS 语法树会令根节点变成 ERROR（实测不抛错，降级分支不会触发）
+            const pyDoc = createMockDocument('x = 1  # py 注释\n', 'python');
+            const rPy = await an.isCursorInCommentOrString(pyDoc, pos(0, 8));
+            const fresh = await astAnalyze(createMockDocument('x = 1  # py 注释\n', 'python'), pos(0, 8));
+            assert.deepStrictEqual(rPy, fresh, '跨语言连续分析的结果必须与全新实例一致');
         } finally {
             an.dispose();
         }
