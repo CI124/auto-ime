@@ -30,6 +30,23 @@ import { VimModeListener } from './modes/vim';
 /** VSCodeVim may activate later than us; re-check after this delay */
 const VIM_REDETECT_DELAY_MS = 2000;
 
+/**
+ * 键位闸门上下文变量。package.json 的两条键位（escape / toggleIME）都受它约束。
+ *
+ * 为什么需要：键位绑定随扩展安装而生效，但 `auto-ime.escape` 命令只在接线成功后才注册。
+ * 若激活中途抛异常（wasm 缺失、FFI 不可用等），ESC 仍会被绑到一个不存在的命令上，
+ * 结果是被吞掉而不是回给 VSCodeVim —— 用户连退出插入模式都做不到。
+ * 所以上下文变量只在全部接线成功后置 true，失败时保持关闭（fail-open）。
+ */
+const ACTIVATED_CONTEXT_KEY = 'auto-ime.activated';
+
+function setActivatedContext(activated: boolean): void {
+    // 在 activate/deactivate 尾部调用，不得抛出；setContext 无接收者时只会 reject，静默忽略即可
+    void vscode.commands
+        .executeCommand('setContext', ACTIVATED_CONTEXT_KEY, activated)
+        .then(undefined, () => {});
+}
+
 /** 唯一模块级状态：当前激活会话（deactivate 需要够到它） */
 let session: ActivationSession | null = null;
 
@@ -110,6 +127,8 @@ class ActivationSession {
             created.initInitialMode();
             created.registerModeListeners(context);
             created.registerFocusSync(context);
+            // 全部接线成功 → 打开键位闸门（失败路径不会执行到这里）
+            setActivatedContext(true);
         } catch (error) {
             created.dispose();
             throw error;
@@ -119,6 +138,8 @@ class ActivationSession {
 
     dispose(): void {
         this.logger.info('Extension auto-ime deactivated');
+        // 先关闸门：本扩展的命令即将不可用，键位必须还给宿主
+        setActivatedContext(false);
         for (const d of this.activeDisposables) d.dispose();
         this.activeDisposables = [];
         this.controller.dispose();

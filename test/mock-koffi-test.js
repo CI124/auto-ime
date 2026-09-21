@@ -10,9 +10,17 @@ const os = require('os');
 
 // 扩展输出面板的所有日志行（用于端到端断言）
 const outputLines = [];
+// vscode.commands.executeCommand 的调用记录（用于断言 setContext 键位闸门）
+const executedCommands = [];
 
 function logged(substr) {
     return outputLines.some((l) => l.includes(substr));
+}
+
+function contextSet(key, value) {
+    return executedCommands.some(
+        (c) => c.command === 'setContext' && c.args[0] === key && c.args[1] === value
+    );
 }
 
 // ============================================================
@@ -34,6 +42,7 @@ function resetMock() {
     mockState.currentLangId = 1033;
     mockState.installedLayouts = [1033, 2052];
     mockState.callLog = [];
+    executedCommands.length = 0;
 }
 
 // ============================================================
@@ -171,7 +180,10 @@ Module._load = function(request, parent, isMain) {
             Disposable: { from: () => ({ dispose: () => {} }) },
             commands: {
                 registerCommand: () => ({ dispose: () => {} }),
-                executeCommand: () => Promise.resolve(),
+                executeCommand: (command, ...args) => {
+                    executedCommands.push({ command, args });
+                    return Promise.resolve();
+                },
             },
             extensions: { getExtension: () => null },
         };
@@ -250,6 +262,21 @@ test('activate 完成全部接线（适配器/分析器/状态栏/命令/监听�
     assert.ok(logged('mode listeners registered'), '模式监听器应注册完成');
     assert.ok(logged('Adapter polls external switches') || logged('Polling Language ID'), '应开始外部切换检测');
     assert.ok(mockContext.subscriptions.length >= 5, `subscriptions 应持有状态栏/分析器/命令/监听器，实际 ${mockContext.subscriptions.length}`);
+    // 键位闸门（巡检 C6）：只有接线全部成功才打开，否则 ESC 会被 our 命令吞掉而不回给 VSCodeVim
+    assert.ok(contextSet('auto-ime.activated', true), '激活完成后应 setContext auto-ime.activated = true');
+});
+
+test('package.json 的两条键位都受 auto-ime.activated 门约束（清单与代码契约一致）', () => {
+    // 本文件的 test() 是立即执行，而 `const fs` 在下方才声明，故就地 require
+    const pkg = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '..', 'package.json'), 'utf-8'));
+    const bindings = pkg.contributes.keybindings || [];
+    assert.strictEqual(bindings.length, 2, '当前应有 escape 与 toggleIME 两条键位');
+    for (const b of bindings) {
+        assert.ok(
+            String(b.when || '').includes('auto-ime.activated'),
+            `${b.command} 的 when 必须含 auto-ime.activated，否则激活失败时键位仍会抢占宿主命令`
+        );
+    }
 });
 
 // ---- 测试 3: 直接测试编译后的内部函数 ----

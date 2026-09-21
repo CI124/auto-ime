@@ -34,12 +34,12 @@
       {
         "command": "auto-ime.escape",
         "key": "escape",
-        "when": "vim.mode == 'Insert' && editorTextFocus"
+        "when": "vim.mode == 'Insert' && editorTextFocus && auto-ime.activated"
       },
       {
         "command": "auto-ime.toggleIME",
         "key": "ctrl+shift+space",
-        "when": "editorTextFocus"
+        "when": "editorTextFocus && auto-ime.activated"
       }
     ],
     "configuration": {
