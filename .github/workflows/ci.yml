@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # 仓库自检守卫：.gitignore 是「白名单」模式，漏放一项就会把 CI/文档/源码
+      # 静默排除在仓库外（曾真实发生过：.github/ 与 src/core/poller.ts 未入库）。
+      # 这三条断言比任何人工检查都便宜，故置于构建之前。
+      - name: Repo self-check (whitelist .gitignore guard)
+        run: node scripts/verify-repo.js
+
+      # wasm 语言文件【不入库】（16MB 二进制），由 postinstall 按内置 SHA-256 清单下载并校验。
+      # 见 docs/adr/0002-wasm-not-in-repo.md
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify language wasm prepared by postinstall
+        run: node scripts/verify-wasm.js
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Compile bundle
+        run: npm run compile
+
+      # pretest 会先 node esbuild.js，再依次跑 ast / controller / vim / koffi / tsf / linux 六套测试
+      - name: Run tests
+        run: npm test

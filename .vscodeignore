@@ -18,3 +18,12 @@ esbuild.js
 tsconfig.json
 package-lock.json
 CONTRIBUTING.md
+
+# Local/isolated test environment artifacts (portable VS Code, caches, built vsix)
+.vscode-test-env/**
+.vscode-test/**
+docs/**
+*.vsix
+run.log
+run2.log
+exitcode.txt
