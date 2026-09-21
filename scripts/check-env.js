@@ -1,11 +1,14 @@
 /**
  * scripts/check-env.js
  *
- * 本地 Linux 开发环境检测脚本。
- * 检查系统是否安装并运行了 Fcitx5 或 IBus，
- * 并测试命令行工具 / D-Bus 的连通性。
+ * 本地 Linux 开发环境诊断脚本（非构建门禁）。
+ * 检查系统是否安装并运行了 Fcitx5 或 IBus，并测试命令行工具与 D-Bus 的连通性。
  *
- * 用法: node scripts/check-env.js
+ * 定位说明：自 v0.8.0 起扩展用自适应轮询而非 D-Bus 信号，D-Bus 探测仅作诊断参考。
+ * 本脚本也【不是】compile/watch 的前置步骤：它回答的是“这台机器的输入法能不能用”，
+ * 与“代码能不能构建”无关；挂在无头 CI runner 上只会把构建刷红（详见 ADR 0004）。
+ *
+ * 用法: node scripts/check-env.js  （或 npm run check-env）
  * 退出码: 0 = 至少一个 IME 可用, 1 = 未检测到可用 IME
  */
 
@@ -252,7 +255,7 @@ if (anyAvailable) {
   pass(`Auto IME 开发环境就绪。可用 IME: ${active.join(', ')}`);
   process.exit(0);
 } else {
-  fail('未检测到可用的输入法框架。Auto IME 扩展将回退到 NullManager (无操作)。');
+  fail('未检测到可用的输入法框架。LinuxAdapter 将拿不到 manager（isReady()=false，切换变为无操作）。');
   console.log('');
   console.log('  安装建议:');
   if (!fcitx5.available) {

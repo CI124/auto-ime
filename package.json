@@ -96,9 +96,10 @@
   "scripts": {
     "check-env": "node scripts/check-env.js",
     "postinstall": "node scripts/download-wasm.js",
-    "precompile": "node scripts/check-env.js",
+    "verify-repo": "node scripts/verify-repo.js",
+    "verify-wasm": "node scripts/verify-wasm.js",
+    "lint": "node scripts/check-granularity.js",
     "compile": "node esbuild.js",
-    "prewatch": "node scripts/check-env.js",
     "watch": "node esbuild.js --watch",
     "pretest": "node esbuild.js",
     "test": "node test/ast-analyzer-test.js && node test/controller-test.js && node test/vim-mode-test.js && node test/mock-koffi-test.js && node test/mock-tsf-test.js && node test/mock-linux-ime-test.js",

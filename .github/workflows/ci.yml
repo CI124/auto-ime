@@ -38,6 +38,10 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      # 粒度/复杂度门禁（真 AST）：超硬上限或存量增长直接拒合
+      - name: Lint (file granularity / complexity gates)
+        run: npm run lint
+
       - name: Compile bundle
         run: npm run compile
 
