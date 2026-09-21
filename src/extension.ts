@@ -27,8 +27,8 @@ import { createPlatformAdapter } from './platforms';
 import { NormalModeListener } from './modes/normal';
 import { VimModeListener } from './modes/vim';
 
-/** VSCodeVim may activate later than us; re-check after this delay */
-const VIM_REDETECT_DELAY_MS = 2000;
+/** VSCodeVim may activate later than us; keep re-checking on this interval until detected */
+const VIM_REDETECT_INTERVAL_MS = 1000;
 
 /**
  * 键位闸门上下文变量。package.json 的两条键位（escape / toggleIME）都受它约束。
@@ -55,13 +55,12 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * Verify Vim is active AND cursor is Block (bidirectional check)
+ * VSCodeVim 是否处于激活状态。仅以“扩展已激活”为判据：
+ * 光标样式（Insert=Line / Normal=Block）由 VimModeListener 自身区分，
+ * 不在检测阶段依赖游标，避免因检测瞬间恰好处于插入模式 / 无活动编辑器而误判为非 Vim。
  */
-function isVimVerified(): boolean {
-    const vimActive = !!vscode.extensions.getExtension('vscodevim.vim')?.isActive;
-    const editor = vscode.window.activeTextEditor;
-    const cursorIsBlock = editor?.options.cursorStyle === vscode.TextEditorCursorStyle.Block;
-    return vimActive && !!cursorIsBlock;
+function isVimActive(): boolean {
+    return !!vscode.extensions.getExtension('vscodevim.vim')?.isActive;
 }
 
 /**
@@ -76,6 +75,8 @@ class ActivationSession {
     private vimModeConfirmed = false;
     // Session-level flag: only show English keyboard warning once
     private englishKeyboardWarningShown = false;
+    // 持续探测 Vim 激活用的 disposable（与 activeDisposables 分开存放，避免被切换监听器时误清）
+    private vimProbeDisposables: vscode.Disposable[] = [];
 
     private constructor(
         logger: LogSink,
@@ -140,6 +141,7 @@ class ActivationSession {
         this.logger.info('Extension auto-ime deactivated');
         // 先关闸门：本扩展的命令即将不可用，键位必须还给宿主
         setActivatedContext(false);
+        this.stopVimRedetect();
         for (const d of this.activeDisposables) d.dispose();
         this.activeDisposables = [];
         this.controller.dispose();
@@ -209,25 +211,43 @@ class ActivationSession {
 
     private registerModeListeners(context: vscode.ExtensionContext): void {
         const logger = this.logger;
-        if (isVimVerified()) {
-            logger.info('[Mode] Initial detection: Vim mode (verified)');
+        if (isVimActive()) {
+            logger.info('[Mode] Initial detection: Vim mode (active)');
             this.switchToVimMode(context);
         } else {
             logger.info('[Mode] Initial detection: Normal mode');
             this.registerModeListener(context, new NormalModeListener());
-            this.scheduleVimRedetect(context);
+            // VSCodeVim 可能比我们晚激活，或检测瞬间无活动编辑器：持续探测直到确认。
+            // 否则一旦错过就会永远停在 NormalModeListener，在 Vim 普通模式下按上下文乱切输入法。
+            this.armVimRedetect(context);
         }
         logger.info(`[Mode] ${this.vimModeConfirmed ? 'Vim' : 'Normal'} mode listeners registered. Extension is ready.`);
     }
 
-    /** Vim may load later than us; retry once (cancelled for free via subscriptions). */
-    private scheduleVimRedetect(context: vscode.ExtensionContext): void {
-        const retryTimer = setTimeout(() => {
-            if (!this.vimModeConfirmed && isVimVerified()) {
-                this.switchToVimMode(context);
+    /**
+     * 持续探测 Vim 激活：扩展激活状态变化事件 + 周期性兜底轮询；一旦确认即切换监听器并停止探测。
+     */
+    private armVimRedetect(context: vscode.ExtensionContext): void {
+        const tryConfirm = () => {
+            if (this.vimModeConfirmed) {
+                this.stopVimRedetect();
+                return;
             }
-        }, VIM_REDETECT_DELAY_MS);
-        context.subscriptions.push({ dispose: () => clearTimeout(retryTimer) });
+            if (isVimActive()) {
+                this.logger.info('[Mode] Vim detected on re-check, switching listeners');
+                this.switchToVimMode(context);
+                this.stopVimRedetect();
+            }
+        };
+        const timer = setInterval(tryConfirm, VIM_REDETECT_INTERVAL_MS);
+        const extChange = vscode.extensions.onDidChange(tryConfirm);
+        this.vimProbeDisposables.push({ dispose: () => clearInterval(timer) }, extChange);
+        context.subscriptions.push(...this.vimProbeDisposables);
+    }
+
+    private stopVimRedetect(): void {
+        for (const d of this.vimProbeDisposables) d.dispose();
+        this.vimProbeDisposables = [];
     }
 
     private registerFocusSync(context: vscode.ExtensionContext): void {

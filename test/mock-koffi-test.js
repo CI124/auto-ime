@@ -152,7 +152,7 @@ Module._load = function(request, parent, isMain) {
                     },
                 }),
             },
-            extensions: { getExtension: () => null },
+            extensions: { getExtension: () => null, onDidChange: () => ({ dispose: () => {} }) },
             window: {
                 activeTextEditor: null,
                 createOutputChannel: () => ({ appendLine: (m) => outputLines.push(String(m)), dispose: () => {} }),
@@ -185,7 +185,7 @@ Module._load = function(request, parent, isMain) {
                     return Promise.resolve();
                 },
             },
-            extensions: { getExtension: () => null },
+            extensions: { getExtension: () => null, onDidChange: () => ({ dispose: () => {} }) },
         };
     }
     return originalLoad.call(this, request, parent, isMain);
