@@ -5,7 +5,7 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [0.9.1] - 2026-09-22
 
 ### 第三轮：建立工程门禁 + 5 项正确性/体验修复（基线 commit `1773e30` 之后）
 
@@ -23,6 +23,9 @@
 - **`IAnalyzer.supports(languageId)`**：区分“确认不是注释”与“我不知道”
 - **`auto-ime.activated` 键位闸门**：两条键位的 `when` 均受其约束，激活失败时 ESC /
   `Ctrl+Shift+Space` 回落给宿主而不是被吞掉
+- **GitHub Release 发布工作流** `.github/workflows/release.yml`：推 `v*` tag 时在
+  `windows-latest` 上 `npm ci → verify-wasm → compile → vsce package` 构建 `.vsix`，
+  并用内置 `GITHUB_TOKEN` 自动创建带该构建产物的 GitHub Release（产物不入库，走 Release）
 - **测试新增/重写 4 套（共 162 用例）**：`poller-test.js`(7)、`controller-test.js`(16)、
   `vim-mode-test.js`(7)、重写 `ast-analyzer-test.js`(27)，均用 esbuild 内存打包加载**真实源码**
 - `npm test` 聚合七套；`.github/workflows/ci.yml` 增加 self-check、verify-wasm、lint 步骤
@@ -42,6 +45,12 @@
 - **写中文被抢切**：markdown / plaintext / jsonc 等未登记语言不再被当成“代码”强制切回英文，
   而是整轮不干预
 - **Vim `modeDetectionTimer` 泄漏**：`register()` 返回的 disposables 内登记清定时器
+- **Vim 普通模式误切输入法（回归）**：`isVimVerified` 要求“vim 已激活 **且** 游标为 Block”
+  且只在 +2s 复检一次；VSCodeVim 晚激活、或检测瞬间无活动编辑器/正处插入态时会永久错过，
+  导致停在 `NormalModeListener`、在普通模式移动光标时按注释/代码上下文乱切（日志表现为全程无
+  `[Mode] Vim mode confirmed`、切换标记恒为 `vim=-`）。改为 `isVimActive`（仅判扩展已激活，
+  插入/普通交由 `VimModeListener` 依游标区分）+ `extensions.onDidChange` 与 1s 兜底轮询持续复检，
+  确认后切换监听器并停止探测，`dispose()` 清理定时器
 - **`.gitignore` 白名单漏放行**：`.github/`、`docs/`、`src/core/poller.ts`、两个测试文件
   此前均未入库，因此上一轮声称“已建立 CI”事实上从未在远端跑过一次
 

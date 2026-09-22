@@ -1,0 +1,56 @@
+name: Release
+
+# 推 v* tag（如 v0.9.1）时：构建 .vsix 并创建带该产物的 GitHub Release。
+# 产物不入库（.vsix 不在 .gitignore 白名单），仅作为 Release 资源分发。
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    # Windows 原生模块（koffi / @koromix win32）需在 windows runner 上随 npm ci 安装，
+    # 默认 vsce package 才会把 win32 预编译产物打进 vsix。
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # postinstall 按内置 SHA-256 清单下载并校验语言 wasm
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify language wasm
+        run: node scripts/verify-wasm.js
+
+      - name: Compile bundle
+        run: npm run compile
+
+      - name: Package VSIX
+        run: npx @vscode/vsce package --no-yarn --allow-missing-repository
+
+      - name: Create GitHub Release with VSIX asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          VSIX="auto-ime-${VERSION}.vsix"
+          if [ ! -f "$VSIX" ]; then
+            echo "构建产物缺失: $VSIX" >&2
+            ls -1 *.vsix >&2 || true
+            exit 1
+          fi
+          # 幂等：Release 已存在则跳过创建，仅覆盖上传产物（支持 tag 重推）
+          gh release create "$GITHUB_REF_NAME" --title "Auto IME ${VERSION}" --generate-notes \
+            || echo "Release $GITHUB_REF_NAME 已存在，继续上传产物"
+          gh release upload "$GITHUB_REF_NAME" "$VSIX" --clobber
+          echo "已发布产物: $VSIX -> Release $GITHUB_REF_NAME"
